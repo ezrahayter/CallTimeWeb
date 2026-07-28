@@ -788,6 +788,7 @@ function renderInlineLog(c) {
 }
 
 let skippedIds = new Set();
+let skipHistory = [];
 
 function renderUpNext(list) {
   const queue = list.contacts.filter(c => c.category !== 'complete' && !skippedIds.has(c.id))
@@ -796,11 +797,20 @@ function renderUpNext(list) {
   if (!queue.length) {
     const hasSkipped = skippedIds.size > 0 && list.contacts.some(c => c.category !== 'complete');
     wrap.innerHTML = hasSkipped
-      ? `<div class="empty-queue"><div class="big">You've gone through everyone</div>Skipped contacts are still waiting.<br><br><button class="ghost" id="resetSkipBtn">Reset skipped</button></div>`
+      ? `<div class="empty-queue"><div class="big">You've gone through everyone</div>Skipped contacts are still waiting.<br><br>
+          <button class="ghost" id="backBtn" ${skipHistory.length ? '' : 'disabled'}>← Back</button>
+          <button class="ghost" id="resetSkipBtn">Reset skipped</button></div>`
       : `<div class="empty-queue"><div class="big">Queue is clear</div>Add contacts or import a list to get started.</div>`;
     if (hasSkipped) {
+      document.getElementById('backBtn').addEventListener('click', () => {
+        const lastId = skipHistory.pop();
+        if (lastId === undefined) return;
+        skippedIds.delete(lastId);
+        renderUpNext(activeList());
+      });
       document.getElementById('resetSkipBtn').addEventListener('click', () => {
         skippedIds.clear();
+        skipHistory = [];
         renderUpNext(activeList());
       });
     }
@@ -827,6 +837,7 @@ function renderUpNext(list) {
       </div>
       <div class="log-actions">
         <button class="primary" id="logCallBtn">Log call</button>
+        <button class="ghost" id="backBtn" ${skipHistory.length ? '' : 'disabled'}>← Back</button>
         <button class="ghost" id="skipBtn">Skip to next →</button>
         <button class="ghost" data-action="edit">Edit contact</button>
       </div>
@@ -846,6 +857,13 @@ function renderUpNext(list) {
   wrap.querySelector('#logCallBtn').addEventListener('click', () => openOutcomePopup(c.id, chosenCat));
   wrap.querySelector('#skipBtn').addEventListener('click', () => {
     skippedIds.add(c.id);
+    skipHistory.push(c.id);
+    renderUpNext(activeList());
+  });
+  wrap.querySelector('#backBtn').addEventListener('click', () => {
+    const lastId = skipHistory.pop();
+    if (lastId === undefined) return;
+    skippedIds.delete(lastId);
     renderUpNext(activeList());
   });
   wrap.querySelector('[data-action="edit"]').addEventListener('click', () => openModal(c.id));
