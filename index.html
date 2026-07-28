@@ -62,6 +62,14 @@
     margin: 0;
     letter-spacing: -0.01em;
   }
+  .hidden { display: none; }
+  .view-tabs { display: flex; gap: 3px; background: var(--card-bg); border: 1px solid var(--hairline); border-radius: 5px; padding: 3px; }
+  .view-tab { border: none; background: transparent; padding: 6px 12px; font-size: 12.5px; font-weight: 600; color: var(--slate); border-radius: 3px; }
+  .view-tab.active { background: var(--ink); color: var(--parchment); }
+  .view-tab:hover:not(.active) { background: #EFE9DA; }
+  .lists-pill-row { display: flex; flex-wrap: wrap; gap: 4px; }
+  .lists-pill { font-size: 10.5px; background: var(--sky-bg); color: var(--sky); padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+  .lists-pill-past { background: #EFEDE7; color: var(--slate); font-style: italic; }
   .list-select-wrap { display: flex; align-items: center; gap: 8px; }
   .list-select-wrap select {
     font-family: 'Lora', serif; font-weight: 600; font-size: 15px;
@@ -302,7 +310,11 @@
   <div class="masthead">
     <div class="masthead-left">
       <h1>Call Time</h1>
-      <div class="list-select-wrap">
+      <div class="view-tabs" id="viewTabs">
+        <button class="view-tab active" data-view="lists">Candidate Lists</button>
+        <button class="view-tab" data-view="master">Master List</button>
+      </div>
+      <div class="list-select-wrap" id="listSelectWrap">
         <select id="listSelect"></select>
         <button class="ghost" id="renameListBtn" title="Rename this list">Rename</button>
         <button class="ghost" id="newListBtn" title="Add a new candidate list">+ New list</button>
@@ -316,6 +328,7 @@
   </div>
 
 
+  <div id="listsView">
   <div class="grid">
     <div>
       <div class="panel">
@@ -389,6 +402,28 @@
           <tbody id="rosterBody"></tbody>
         </table>
       </div>
+    </div>
+  </div>
+  </div>
+
+  <div id="masterListView" class="hidden">
+    <div class="roster-header">
+      <h2 style="font-family:'Lora',serif; font-size:18px; margin:0;">Master Contact List</h2>
+    </div>
+    <div class="controls-row" style="margin-bottom:12px;">
+      <input type="text" id="masterSearchInput" placeholder="Search name, phone, email...">
+    </div>
+    <div class="panel" style="padding:0; overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Phone / Email</th>
+            <th>On lists</th>
+          </tr>
+        </thead>
+        <tbody id="masterListBody"></tbody>
+      </table>
     </div>
   </div>
 
@@ -493,6 +528,54 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="personModalBackdrop">
+  <div class="modal">
+    <h3>Contact</h3>
+    <input type="hidden" id="personEditId">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="pName" placeholder="Full name">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Phone</label>
+        <input type="text" id="pPhone" placeholder="(555) 555-5555">
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="text" id="pEmail" placeholder="name@email.com">
+      </div>
+    </div>
+    <div class="field">
+      <label>Appears on</label>
+      <div class="roster-mini" id="personListsInfo">—</div>
+    </div>
+    <div class="donations-section" style="margin-top:16px;">
+      <h4>Donation history</h4>
+      <div class="donations-list" id="personDonationsList"></div>
+      <div class="donation-form">
+        <div class="field amt-field">
+          <label>Amount</label>
+          <input type="number" id="personDonationAmount" placeholder="250">
+        </div>
+        <div class="field date-field">
+          <label>Date</label>
+          <input type="date" id="personDonationDate">
+        </div>
+        <div class="field note-field">
+          <label>Note</label>
+          <input type="text" id="personDonationNote" placeholder="e.g. 2025 fall gala">
+        </div>
+        <button class="ghost" id="addPersonDonationBtn">Add</button>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" id="cancelPersonModalBtn">Close</button>
+      <button class="primary" id="savePersonBtn">Save</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
@@ -577,6 +660,23 @@ async function loadPeople(force) {
   if (error) { console.error(error); return peopleCache || []; }
   peopleCache = data || [];
   return peopleCache;
+}
+
+async function recordListMembership(personId, listId) {
+  if (!personId || !listId) return;
+  const p = (peopleCache || []).find(x => x.id === personId);
+  const existing = (p && p.list_history) || [];
+  if (existing.includes(listId)) return;
+  const updated = [...existing, listId];
+  const { error } = await window.supabase.from('people').update({ list_history: updated }).eq('id', personId);
+  if (error) { console.error(error); return; }
+  if (p) p.list_history = updated;
+}
+
+function listsForPerson(p) {
+  const currentIds = new Set(state.lists.filter(l => l.contacts.some(c => c.personId === p.id)).map(l => l.id));
+  const allIds = new Set([...currentIds, ...(p.list_history || [])]);
+  return state.lists.filter(l => allIds.has(l.id)).map(l => ({ list: l, current: currentIds.has(l.id) }));
 }
 
 async function findOrCreatePerson({ name, phone, email }) {
@@ -746,6 +846,7 @@ document.getElementById('createNewListBtn').addEventListener('click', async () =
   const list = { id: uid('list'), name, goal: 10, contacts };
   state.lists.push(list);
   activeListId = list.id;
+  await Promise.all(contacts.map(c => recordListMembership(c.personId, list.id)));
   await saveData();
   renderListSelect();
   renderAll();
@@ -1071,6 +1172,7 @@ document.getElementById('saveContactBtn').addEventListener('click', async () => 
   } else {
     list.contacts.push({ id: uid('c'), ...data, personId, priority: Date.now(), callLog: [] });
   }
+  await recordListMembership(personId, list.id);
   await saveData();
   closeModal();
   renderAll();
@@ -1204,12 +1306,150 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
       priority: Date.now(),
       callLog: []
     });
+    await recordListMembership(personId, list.id);
     added++;
   }
   await saveData();
   renderAll();
   showToast(`Imported ${added} contact${added === 1 ? '' : 's'}`);
   e.target.value = '';
+});
+
+// ---- Master List tab ----
+let masterSearchQuery = '';
+
+document.querySelectorAll('.view-tab').forEach(btn => {
+  btn.addEventListener('click', () => switchView(btn.dataset.view));
+});
+
+function switchView(view) {
+  document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+  document.getElementById('listsView').classList.toggle('hidden', view !== 'lists');
+  document.getElementById('masterListView').classList.toggle('hidden', view !== 'master');
+  document.getElementById('listSelectWrap').classList.toggle('hidden', view !== 'lists');
+  if (view === 'master') renderMasterList();
+}
+
+async function renderMasterList() {
+  const tbody = document.getElementById('masterListBody');
+  tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--slate); padding:24px;">Loading…</td></tr>`;
+  await loadPeople(true);
+  const q = masterSearchQuery.toLowerCase().trim();
+  const people = (peopleCache || []).filter(p =>
+    !q || p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q)
+  ).slice().sort((a,b) => a.name.localeCompare(b.name));
+  if (!people.length) {
+    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--slate); padding:24px;">${(peopleCache||[]).length ? 'No contacts match.' : 'No contacts yet — add or import contacts in a candidate list to build this out.'}</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = people.map(p => {
+    const entries = listsForPerson(p);
+    const pillsHtml = entries.length
+      ? `<div class="lists-pill-row">${entries.map(e => `<span class="lists-pill${e.current ? '' : ' lists-pill-past'}">${escapeHtml(e.list.name)}${e.current ? '' : ' (past)'}</span>`).join('')}</div>`
+      : '<span style="color:var(--slate); font-style:italic;">Not on any list</span>';
+    return `
+      <tr class="contact-row" data-person-id="${p.id}">
+        <td><div class="name-cell">${escapeHtml(p.name)}</div></td>
+        <td class="sub-cell">${escapeHtml(p.phone || '')}${p.phone && p.email ? ' · ' : ''}${escapeHtml(p.email || '')}</td>
+        <td>${pillsHtml}</td>
+      </tr>
+    `;
+  }).join('');
+  tbody.querySelectorAll('.contact-row').forEach(tr => {
+    tr.addEventListener('click', () => openPersonModal(tr.dataset.personId));
+  });
+}
+
+document.getElementById('masterSearchInput').addEventListener('input', (e) => {
+  masterSearchQuery = e.target.value;
+  renderMasterList();
+});
+
+async function openPersonModal(personId) {
+  const p = (peopleCache || []).find(x => x.id === personId);
+  if (!p) return;
+  document.getElementById('personEditId').value = personId;
+  document.getElementById('pName').value = p.name || '';
+  document.getElementById('pPhone').value = p.phone || '';
+  document.getElementById('pEmail').value = p.email || '';
+  const listLines = listsForPerson(p).map(e => {
+    if (e.current) {
+      const c = e.list.contacts.find(c => c.personId === personId);
+      return `<div>${escapeHtml(e.list.name)} — ${catLabel(c.category)}</div>`;
+    }
+    return `<div style="color:var(--slate);">${escapeHtml(e.list.name)} — no longer on this list</div>`;
+  });
+  document.getElementById('personListsInfo').innerHTML = listLines.length ? listLines.join('') : 'Not on any candidate list yet.';
+  document.getElementById('personDonationAmount').value = '';
+  document.getElementById('personDonationDate').value = todayStr();
+  document.getElementById('personDonationNote').value = '';
+  await renderPersonDonations(personId);
+  document.getElementById('personModalBackdrop').classList.add('show');
+}
+
+async function renderPersonDonations(personId) {
+  const listEl = document.getElementById('personDonationsList');
+  listEl.innerHTML = '<div class="empty">Loading…</div>';
+  const donations = await loadDonations(personId);
+  if (!donations.length) {
+    listEl.innerHTML = '<div class="empty">No donations logged yet.</div>';
+    return;
+  }
+  listEl.innerHTML = donations.map(d => {
+    const amt = d.amount != null ? '$' + Number(d.amount).toLocaleString() : '—';
+    const date = d.donated_on || '';
+    return `<div class="donation-entry"><span>${escapeHtml(date)}${d.note ? ' — ' + escapeHtml(d.note) : ''}</span><span class="amt">${amt}</span></div>`;
+  }).join('');
+}
+
+document.getElementById('addPersonDonationBtn').addEventListener('click', async () => {
+  const personId = document.getElementById('personEditId').value;
+  if (!personId) return;
+  const amountRaw = document.getElementById('personDonationAmount').value;
+  const amount = amountRaw !== '' ? Number(amountRaw) : null;
+  const donated_on = document.getElementById('personDonationDate').value || null;
+  const note = document.getElementById('personDonationNote').value.trim();
+  if (amount == null && !note) { showToast('Enter an amount or a note'); return; }
+  const { error } = await window.supabase.from('donations')
+    .insert({ person_id: personId, amount, donated_on, note: note || null });
+  if (error) { console.error(error); showToast('Could not save donation'); return; }
+  document.getElementById('personDonationAmount').value = '';
+  document.getElementById('personDonationNote').value = '';
+  await renderPersonDonations(personId);
+  showToast('Donation logged');
+});
+
+function closePersonModal() {
+  document.getElementById('personModalBackdrop').classList.remove('show');
+}
+document.getElementById('cancelPersonModalBtn').addEventListener('click', closePersonModal);
+document.getElementById('personModalBackdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'personModalBackdrop') closePersonModal();
+});
+
+document.getElementById('savePersonBtn').addEventListener('click', async () => {
+  const personId = document.getElementById('personEditId').value;
+  const name = document.getElementById('pName').value.trim();
+  if (!name) { showToast('Name is required'); return; }
+  const phone = document.getElementById('pPhone').value.trim();
+  const email = document.getElementById('pEmail').value.trim();
+  const { error } = await window.supabase.from('people')
+    .update({ name, phone: phone || null, email: email || null, updated_at: new Date().toISOString() })
+    .eq('id', personId);
+  if (error) { console.error(error); showToast('Could not save'); return; }
+  const cached = (peopleCache || []).find(x => x.id === personId);
+  if (cached) { cached.name = name; cached.phone = phone; cached.email = email; }
+  let touchedLists = false;
+  state.lists.forEach(l => {
+    l.contacts.forEach(c => {
+      if (c.personId === personId) { c.name = name; c.phone = phone; c.email = email; touchedLists = true; }
+    });
+  });
+  if (touchedLists) await saveData();
+  closePersonModal();
+  renderMasterList();
+  renderAll();
+  showToast('Saved');
 });
 
 // App data loads automatically once sign-in is confirmed (see supabase-ready listener above).
