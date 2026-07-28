@@ -327,9 +327,9 @@
       <div class="panel">
         <h2>Data</h2>
         <div style="display:flex; flex-direction:column; gap:8px;">
-          <button class="full" id="importBtn">Import CSV</button>
-          <input type="file" id="csvFileInput" accept=".csv">
-          <div class="csv-help">Columns: Name, Phone, Email, Ask, Last Gift, Notes, Category (optional — Not Complete / Current / Needs Follow Up / Complete)</div>
+          <button class="full" id="importBtn">Import CSV or Excel</button>
+          <input type="file" id="csvFileInput" accept=".csv,.xlsx,.xls">
+          <div class="csv-help">CSV or Excel (.xlsx/.xls). Columns: Name, Phone, Email, Ask, Last Gift, Notes, Category (optional — Not Complete / Current / Needs Follow Up / Complete)</div>
           <button class="full" id="exportBtn">Export list as CSV</button>
           <button class="full primary" id="addContactBtn">+ Add contact</button>
         </div>
@@ -436,6 +436,7 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <script>
 const todayStr = () => new Date().toISOString().slice(0,10);
 document.getElementById('dateTag').textContent = new Date().toLocaleDateString(undefined, {weekday:'short', month:'short', day:'numeric'});
@@ -907,6 +908,13 @@ function parseCsv(text) {
   return rows;
 }
 
+function parseExcel(arrayBuffer) {
+  const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', blankrows: false })
+    .map(row => row.map(v => String(v ?? '')));
+}
+
 function normalizeCategory(raw) {
   const s = (raw||'').toLowerCase().trim();
   if (!s) return 'not-complete';
@@ -924,9 +932,9 @@ document.getElementById('importBtn').addEventListener('click', () => {
 document.getElementById('csvFileInput').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  const text = await file.text();
-  const rows = parseCsv(text);
-  if (!rows.length) { showToast('CSV appears empty'); return; }
+  const isExcel = /\.xlsx?$/i.test(file.name);
+  const rows = isExcel ? parseExcel(await file.arrayBuffer()) : parseCsv(await file.text());
+  if (!rows.length) { showToast('File appears empty'); return; }
   const header = rows[0].map(h => h.toLowerCase().trim());
   const idx = {
     name: header.findIndex(h => h.includes('name')),
@@ -937,7 +945,7 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
     notes: header.findIndex(h => h.includes('note')),
     category: header.findIndex(h => h.includes('categ') || h.includes('status')),
   };
-  if (idx.name === -1) { showToast('CSV needs a Name column'); return; }
+  if (idx.name === -1) { showToast('File needs a Name column'); return; }
   const list = activeList();
   let added = 0;
   for (let i = 1; i < rows.length; i++) {
