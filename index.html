@@ -304,6 +304,7 @@
       <h1>Call Time</h1>
       <div class="list-select-wrap">
         <select id="listSelect"></select>
+        <button class="ghost" id="renameListBtn" title="Rename this list">Rename</button>
         <button class="ghost" id="newListBtn" title="Add a new candidate list">+ New list</button>
       </div>
     </div>
@@ -661,6 +662,17 @@ function renderListSelect() {
 document.getElementById('listSelect').addEventListener('change', (e) => {
   activeListId = e.target.value;
   renderAll();
+});
+
+document.getElementById('renameListBtn').addEventListener('click', async () => {
+  const list = activeList();
+  if (!list) return;
+  const name = prompt('Rename this list:', list.name);
+  if (!name || !name.trim() || name.trim() === list.name) return;
+  list.name = name.trim();
+  await saveData();
+  renderListSelect();
+  showToast('Renamed to ' + list.name);
 });
 
 document.getElementById('newListBtn').addEventListener('click', async () => {
