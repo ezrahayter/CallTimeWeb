@@ -521,15 +521,25 @@ function activeList() {
   return state.lists.find(l => l.id === activeListId) || state.lists[0];
 }
 
+let dataLoaded = false;
+
 async function loadData() {
+  let fetched;
   try {
     const { data, error } = await window.supabase.from('app_state').select('data').eq('id', 'main').single();
     if (error) throw error;
-    state = (data && data.data) || { lists: [] };
+    fetched = (data && data.data) || { lists: [] };
   } catch (e) {
     console.error(e);
-    state = { lists: [] };
+    dataLoaded = false;
+    document.getElementById('callCardWrap').innerHTML =
+      `<div class="empty-queue"><div class="big">Couldn't load your data</div>Nothing has been changed — check your connection and try again.<br><br><button class="ghost" id="retryLoadBtn">Retry</button></div>`;
+    document.getElementById('retryLoadBtn').addEventListener('click', loadData);
+    showToast('Could not load data — check your connection');
+    return;
   }
+  state = fetched;
+  dataLoaded = true;
   if (!state.lists || !state.lists.length) {
     state.lists = [{ id: uid('list'), name: 'New Candidate', goal: 10, contacts: [] }];
   }
@@ -543,6 +553,10 @@ async function loadData() {
 }
 
 async function saveData() {
+  if (!dataLoaded) {
+    showToast('Not saving — your data hasn\'t finished loading. Refresh and try again.');
+    return;
+  }
   try {
     const { error } = await window.supabase.from('app_state')
       .upsert({ id: 'main', data: state, updated_at: new Date().toISOString() });
