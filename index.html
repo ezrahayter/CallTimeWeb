@@ -70,6 +70,16 @@
   .lists-pill-row { display: flex; flex-wrap: wrap; gap: 4px; }
   .lists-pill { font-size: 10.5px; background: var(--sky-bg); color: var(--sky); padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
   .lists-pill-past { background: #EFEDE7; color: var(--slate); font-style: italic; }
+  .merge-bar { display: flex; align-items: center; gap: 10px; }
+  .merge-candidate-group { border: 1px solid var(--hairline); border-radius: 5px; padding: 10px 12px; margin-bottom: 12px; }
+  .merge-candidate-group .field-label { font-size: 12px; color: var(--slate); margin-bottom: 4px; font-weight: 500; }
+  .merge-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .merge-chip {
+    font-size: 11.5px; padding: 4px 9px; border-radius: 12px; border: 1px solid var(--hairline);
+    background: var(--card-bg); cursor: pointer;
+  }
+  .merge-chip:hover { background: var(--amber-bg); border-color: var(--brass); }
+  .merge-summary { font-size: 12.5px; color: var(--slate); margin-top: 10px; border-top: 1px dashed var(--hairline); padding-top: 10px; }
   .list-select-wrap { display: flex; align-items: center; gap: 8px; }
   .list-select-wrap select {
     font-family: 'Lora', serif; font-weight: 600; font-size: 15px;
@@ -363,7 +373,7 @@
         <div style="display:flex; flex-direction:column; gap:8px;">
           <button class="full" id="importBtn">Import CSV or Excel</button>
           <input type="file" id="csvFileInput" accept=".csv,.xlsx,.xls">
-          <div class="csv-help">CSV or Excel (.xlsx/.xls). Columns: Name, Phone, Email, Ask, Last Gift, Notes, Category (optional — Not Complete / Current / Needs Follow Up / Complete)</div>
+          <div class="csv-help">CSV or Excel (.xlsx/.xls). Columns: Name, Phone, Email, Address, Organization, Occupation, Ask, Last Gift, Notes, Category (optional — Not Complete / Current / Needs Follow Up / Complete)</div>
           <button class="full" id="exportBtn">Export list as CSV</button>
           <button class="full primary" id="addContactBtn">+ Add contact</button>
         </div>
@@ -410,15 +420,18 @@
     <div class="roster-header">
       <h2 style="font-family:'Lora',serif; font-size:18px; margin:0;">Master Contact List</h2>
     </div>
-    <div class="controls-row" style="margin-bottom:12px;">
-      <input type="text" id="masterSearchInput" placeholder="Search name, phone, email...">
+    <div class="controls-row merge-bar" style="margin-bottom:12px;">
+      <input type="text" id="masterSearchInput" placeholder="Search name, phone, email, org, address...">
+      <button class="ghost hidden" id="mergeSelectedBtn">Merge selected (0)</button>
     </div>
     <div class="panel" style="padding:0; overflow-x:auto;">
       <table>
         <thead>
           <tr>
+            <th></th>
             <th>Name</th>
-            <th>Phone / Email</th>
+            <th>Organization / Occupation</th>
+            <th>Contact</th>
             <th>On lists</th>
           </tr>
         </thead>
@@ -446,6 +459,20 @@
       <div class="field">
         <label>Email</label>
         <input type="text" id="fEmail" placeholder="name@email.com">
+      </div>
+    </div>
+    <div class="field">
+      <label>Address</label>
+      <input type="text" id="fAddress" placeholder="123 Main St, City, ST 12345">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Organization</label>
+        <input type="text" id="fOrganization" placeholder="Acme Inc.">
+      </div>
+      <div class="field">
+        <label>Occupation</label>
+        <input type="text" id="fOccupation" placeholder="CEO">
       </div>
     </div>
     <div class="field-row">
@@ -547,6 +574,20 @@
       </div>
     </div>
     <div class="field">
+      <label>Address</label>
+      <input type="text" id="pAddress" placeholder="123 Main St, City, ST 12345">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Organization</label>
+        <input type="text" id="pOrganization" placeholder="Acme Inc.">
+      </div>
+      <div class="field">
+        <label>Occupation</label>
+        <input type="text" id="pOccupation" placeholder="CEO">
+      </div>
+    </div>
+    <div class="field">
       <label>Appears on</label>
       <div class="roster-mini" id="personListsInfo">—</div>
     </div>
@@ -572,6 +613,19 @@
     <div class="modal-actions">
       <button class="ghost" id="cancelPersonModalBtn">Close</button>
       <button class="primary" id="savePersonBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="mergeModalBackdrop">
+  <div class="modal">
+    <h3>Merge contacts</h3>
+    <p style="font-size:12.5px; color:var(--slate); margin-top:-10px;">Pick which value to keep for each field. Everything else — donation history, call logs, and list membership — will be combined automatically.</p>
+    <div id="mergeFieldsWrap"></div>
+    <div class="merge-summary" id="mergeSummary"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="cancelMergeModalBtn">Cancel</button>
+      <button class="primary" id="confirmMergeBtn">Merge</button>
     </div>
   </div>
 </div>
@@ -679,7 +733,7 @@ function listsForPerson(p) {
   return state.lists.filter(l => allIds.has(l.id)).map(l => ({ list: l, current: currentIds.has(l.id) }));
 }
 
-async function findOrCreatePerson({ name, phone, email }) {
+async function findOrCreatePerson({ name, phone, email, address, organization, occupation }) {
   const people = await loadPeople();
   const np = normPhone(phone), ne = normEmail(email);
   let match = null;
@@ -687,11 +741,21 @@ async function findOrCreatePerson({ name, phone, email }) {
   if (!match && ne) match = people.find(p => ne && normEmail(p.email) === ne);
   if (match) return match.id;
   const { data, error } = await window.supabase.from('people')
-    .insert({ name, phone: phone || null, email: email || null })
+    .insert({ name, phone: phone || null, email: email || null, address: address || null, organization: organization || null, occupation: occupation || null })
     .select().single();
   if (error) { console.error(error); return null; }
   peopleCache.push(data);
   return data.id;
+}
+
+async function syncPersonFields(personId, fields) {
+  if (!personId) return;
+  const { error } = await window.supabase.from('people')
+    .update({ ...fields, updated_at: new Date().toISOString() })
+    .eq('id', personId);
+  if (error) { console.error(error); return; }
+  const cached = (peopleCache || []).find(x => x.id === personId);
+  if (cached) Object.assign(cached, fields);
 }
 
 async function loadDonations(personId) {
@@ -939,6 +1003,8 @@ function renderUpNext(list) {
       <div class="call-meta">
         ${c.phone ? `<span>${escapeHtml(c.phone)}</span>` : ''}
         ${c.email ? `<span>${escapeHtml(c.email)}</span>` : ''}
+        ${c.address ? `<span>${escapeHtml(c.address)}</span>` : ''}
+        ${(c.organization || c.occupation) ? `<span>${escapeHtml([c.occupation, c.organization].filter(Boolean).join(' at '))}</span>` : ''}
         ${c.ask ? `<span>Ask: ${escapeHtml(c.ask)}</span>` : ''}
         ${c.lastGift ? `<span>Last: ${escapeHtml(c.lastGift)}</span>` : ''}
       </div>
@@ -1082,6 +1148,9 @@ async function openModal(id) {
   document.getElementById('fName').value = c ? c.name : '';
   document.getElementById('fPhone').value = c ? (c.phone||'') : '';
   document.getElementById('fEmail').value = c ? (c.email||'') : '';
+  document.getElementById('fAddress').value = c ? (c.address||'') : '';
+  document.getElementById('fOrganization').value = c ? (c.organization||'') : '';
+  document.getElementById('fOccupation').value = c ? (c.occupation||'') : '';
   document.getElementById('fAsk').value = c ? (c.ask||'') : '';
   document.getElementById('fLastGift').value = c ? (c.lastGift||'') : '';
   document.getElementById('fNotes').value = c ? (c.notes||'') : '';
@@ -1160,6 +1229,9 @@ document.getElementById('saveContactBtn').addEventListener('click', async () => 
     name,
     phone: document.getElementById('fPhone').value.trim(),
     email: document.getElementById('fEmail').value.trim(),
+    address: document.getElementById('fAddress').value.trim(),
+    organization: document.getElementById('fOrganization').value.trim(),
+    occupation: document.getElementById('fOccupation').value.trim(),
     ask: document.getElementById('fAsk').value.trim(),
     lastGift: document.getElementById('fLastGift').value.trim(),
     notes: document.getElementById('fNotes').value.trim(),
@@ -1169,6 +1241,12 @@ document.getElementById('saveContactBtn').addEventListener('click', async () => 
   if (id) {
     const c = list.contacts.find(x => x.id === id);
     Object.assign(c, data, { personId: personId || c.personId });
+    if (personId) {
+      await syncPersonFields(personId, {
+        name: data.name, phone: data.phone || null, email: data.email || null,
+        address: data.address || null, organization: data.organization || null, occupation: data.occupation || null,
+      });
+    }
   } else {
     list.contacts.push({ id: uid('c'), ...data, personId, priority: Date.now(), callLog: [] });
   }
@@ -1210,8 +1288,8 @@ document.getElementById('setGoalBtn').addEventListener('click', async () => {
 
 document.getElementById('exportBtn').addEventListener('click', () => {
   const list = activeList();
-  const headers = ['Name','Phone','Email','Ask','Last Gift','Category','Notes'];
-  const rows = list.contacts.map(c => [c.name, c.phone, c.email, c.ask, c.lastGift, catLabel(c.category), c.notes]);
+  const headers = ['Name','Phone','Email','Address','Organization','Occupation','Ask','Last Gift','Category','Notes'];
+  const rows = list.contacts.map(c => [c.name, c.phone, c.email, c.address, c.organization, c.occupation, c.ask, c.lastGift, catLabel(c.category), c.notes]);
   const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], {type: 'text/csv'});
   const url = URL.createObjectURL(blob);
@@ -1278,6 +1356,9 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
     name: header.findIndex(h => h.includes('name')),
     phone: header.findIndex(h => h.includes('phone')),
     email: header.findIndex(h => h.includes('email')),
+    address: header.findIndex(h => h.includes('address')),
+    organization: header.findIndex(h => h.includes('org')),
+    occupation: header.findIndex(h => h.includes('occupation') || h.includes('job') || h.includes('title')),
     ask: header.findIndex(h => h.includes('ask')),
     lastGift: header.findIndex(h => h.includes('last')),
     notes: header.findIndex(h => h.includes('note')),
@@ -1292,12 +1373,18 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
     if (!name) continue;
     const phone = idx.phone > -1 ? (r[idx.phone]||'').trim() : '';
     const email = idx.email > -1 ? (r[idx.email]||'').trim() : '';
-    const personId = await findOrCreatePerson({ name, phone, email });
+    const address = idx.address > -1 ? (r[idx.address]||'').trim() : '';
+    const organization = idx.organization > -1 ? (r[idx.organization]||'').trim() : '';
+    const occupation = idx.occupation > -1 ? (r[idx.occupation]||'').trim() : '';
+    const personId = await findOrCreatePerson({ name, phone, email, address, organization, occupation });
     list.contacts.push({
       id: uid('c'),
       name,
       phone,
       email,
+      address,
+      organization,
+      occupation,
       ask: idx.ask > -1 ? (r[idx.ask]||'').trim() : '',
       lastGift: idx.lastGift > -1 ? (r[idx.lastGift]||'').trim() : '',
       notes: idx.notes > -1 ? (r[idx.notes]||'').trim() : '',
@@ -1317,6 +1404,7 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
 
 // ---- Master List tab ----
 let masterSearchQuery = '';
+let mergeSelectedIds = new Set();
 
 document.querySelectorAll('.view-tab').forEach(btn => {
   btn.addEventListener('click', () => switchView(btn.dataset.view));
@@ -1330,16 +1418,31 @@ function switchView(view) {
   if (view === 'master') renderMasterList();
 }
 
+function updateMergeButton() {
+  const btn = document.getElementById('mergeSelectedBtn');
+  btn.textContent = `Merge selected (${mergeSelectedIds.size})`;
+  btn.classList.toggle('hidden', mergeSelectedIds.size < 2);
+}
+
 async function renderMasterList() {
   const tbody = document.getElementById('masterListBody');
-  tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--slate); padding:24px;">Loading…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--slate); padding:24px;">Loading…</td></tr>`;
   await loadPeople(true);
+  const validIds = new Set((peopleCache || []).map(p => p.id));
+  mergeSelectedIds.forEach(id => { if (!validIds.has(id)) mergeSelectedIds.delete(id); });
+  updateMergeButton();
   const q = masterSearchQuery.toLowerCase().trim();
   const people = (peopleCache || []).filter(p =>
-    !q || p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q)
+    !q ||
+    p.name.toLowerCase().includes(q) ||
+    (p.phone||'').includes(q) ||
+    (p.email||'').toLowerCase().includes(q) ||
+    (p.address||'').toLowerCase().includes(q) ||
+    (p.organization||'').toLowerCase().includes(q) ||
+    (p.occupation||'').toLowerCase().includes(q)
   ).slice().sort((a,b) => a.name.localeCompare(b.name));
   if (!people.length) {
-    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--slate); padding:24px;">${(peopleCache||[]).length ? 'No contacts match.' : 'No contacts yet — add or import contacts in a candidate list to build this out.'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--slate); padding:24px;">${(peopleCache||[]).length ? 'No contacts match.' : 'No contacts yet — add or import contacts in a candidate list to build this out.'}</td></tr>`;
     return;
   }
   tbody.innerHTML = people.map(p => {
@@ -1347,16 +1450,31 @@ async function renderMasterList() {
     const pillsHtml = entries.length
       ? `<div class="lists-pill-row">${entries.map(e => `<span class="lists-pill${e.current ? '' : ' lists-pill-past'}">${escapeHtml(e.list.name)}${e.current ? '' : ' (past)'}</span>`).join('')}</div>`
       : '<span style="color:var(--slate); font-style:italic;">Not on any list</span>';
+    const orgLine = [p.occupation, p.organization].filter(Boolean).join(' at ');
+    const contactLine = [p.phone, p.email, p.address].filter(Boolean).join(' · ');
     return `
       <tr class="contact-row" data-person-id="${p.id}">
+        <td><input type="checkbox" class="merge-checkbox" data-person-id="${p.id}" ${mergeSelectedIds.has(p.id) ? 'checked' : ''}></td>
         <td><div class="name-cell">${escapeHtml(p.name)}</div></td>
-        <td class="sub-cell">${escapeHtml(p.phone || '')}${p.phone && p.email ? ' · ' : ''}${escapeHtml(p.email || '')}</td>
+        <td class="sub-cell">${orgLine ? escapeHtml(orgLine) : '—'}</td>
+        <td class="sub-cell">${contactLine ? escapeHtml(contactLine) : '—'}</td>
         <td>${pillsHtml}</td>
       </tr>
     `;
   }).join('');
   tbody.querySelectorAll('.contact-row').forEach(tr => {
-    tr.addEventListener('click', () => openPersonModal(tr.dataset.personId));
+    tr.addEventListener('click', (e) => {
+      if (e.target.classList.contains('merge-checkbox')) return;
+      openPersonModal(tr.dataset.personId);
+    });
+  });
+  tbody.querySelectorAll('.merge-checkbox').forEach(cb => {
+    cb.addEventListener('click', (e) => e.stopPropagation());
+    cb.addEventListener('change', () => {
+      const pid = cb.dataset.personId;
+      if (cb.checked) mergeSelectedIds.add(pid); else mergeSelectedIds.delete(pid);
+      updateMergeButton();
+    });
   });
 }
 
@@ -1372,6 +1490,9 @@ async function openPersonModal(personId) {
   document.getElementById('pName').value = p.name || '';
   document.getElementById('pPhone').value = p.phone || '';
   document.getElementById('pEmail').value = p.email || '';
+  document.getElementById('pAddress').value = p.address || '';
+  document.getElementById('pOrganization').value = p.organization || '';
+  document.getElementById('pOccupation').value = p.occupation || '';
   const listLines = listsForPerson(p).map(e => {
     if (e.current) {
       const c = e.list.contacts.find(c => c.personId === personId);
@@ -1433,16 +1554,19 @@ document.getElementById('savePersonBtn').addEventListener('click', async () => {
   if (!name) { showToast('Name is required'); return; }
   const phone = document.getElementById('pPhone').value.trim();
   const email = document.getElementById('pEmail').value.trim();
+  const address = document.getElementById('pAddress').value.trim();
+  const organization = document.getElementById('pOrganization').value.trim();
+  const occupation = document.getElementById('pOccupation').value.trim();
   const { error } = await window.supabase.from('people')
-    .update({ name, phone: phone || null, email: email || null, updated_at: new Date().toISOString() })
+    .update({ name, phone: phone || null, email: email || null, address: address || null, organization: organization || null, occupation: occupation || null, updated_at: new Date().toISOString() })
     .eq('id', personId);
   if (error) { console.error(error); showToast('Could not save'); return; }
   const cached = (peopleCache || []).find(x => x.id === personId);
-  if (cached) { cached.name = name; cached.phone = phone; cached.email = email; }
+  if (cached) Object.assign(cached, { name, phone, email, address, organization, occupation });
   let touchedLists = false;
   state.lists.forEach(l => {
     l.contacts.forEach(c => {
-      if (c.personId === personId) { c.name = name; c.phone = phone; c.email = email; touchedLists = true; }
+      if (c.personId === personId) { Object.assign(c, { name, phone, email, address, organization, occupation }); touchedLists = true; }
     });
   });
   if (touchedLists) await saveData();
@@ -1450,6 +1574,127 @@ document.getElementById('savePersonBtn').addEventListener('click', async () => {
   renderMasterList();
   renderAll();
   showToast('Saved');
+});
+
+// ---- Merge duplicate contacts ----
+const MERGE_FIELDS = [
+  { key: 'name', label: 'Name' },
+  { key: 'phone', label: 'Phone' },
+  { key: 'email', label: 'Email' },
+  { key: 'address', label: 'Address' },
+  { key: 'organization', label: 'Organization' },
+  { key: 'occupation', label: 'Occupation' },
+];
+let mergeCandidateIds = [];
+
+function openMergeModal(ids) {
+  const people = ids.map(id => (peopleCache || []).find(p => p.id === id)).filter(Boolean);
+  if (people.length < 2) return;
+  mergeCandidateIds = people.map(p => p.id);
+  const wrap = document.getElementById('mergeFieldsWrap');
+  wrap.innerHTML = MERGE_FIELDS.map(f => {
+    const values = people.map(p => (p[f.key] || '').trim()).filter(Boolean);
+    const uniqueValues = [...new Set(values)];
+    const defaultVal = uniqueValues[0] || '';
+    const chips = uniqueValues.map(v => `<span class="merge-chip" data-field="${f.key}" data-value="${escapeHtml(v)}">${escapeHtml(v)}</span>`).join('');
+    return `
+      <div class="merge-candidate-group">
+        <div class="field-label">${f.label}</div>
+        <input type="text" id="merge_${f.key}" value="${escapeHtml(defaultVal)}">
+        ${uniqueValues.length > 1 ? `<div class="merge-chips">${chips}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+  wrap.querySelectorAll('.merge-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.getElementById('merge_' + chip.dataset.field).value = chip.dataset.value;
+    });
+  });
+  const totalLists = new Set();
+  people.forEach(p => (p.list_history || []).forEach(id => totalLists.add(id)));
+  state.lists.forEach(l => { if (l.contacts.some(c => people.some(p => p.id === c.personId))) totalLists.add(l.id); });
+  document.getElementById('mergeSummary').textContent =
+    `Merging ${people.length} contacts into one. Donation history, call logs, and membership across ${totalLists.size} list${totalLists.size === 1 ? '' : 's'} will be combined.`;
+  document.getElementById('mergeModalBackdrop').classList.add('show');
+}
+
+document.getElementById('mergeSelectedBtn').addEventListener('click', () => {
+  openMergeModal(Array.from(mergeSelectedIds));
+});
+
+function closeMergeModal() {
+  document.getElementById('mergeModalBackdrop').classList.remove('show');
+}
+document.getElementById('cancelMergeModalBtn').addEventListener('click', closeMergeModal);
+document.getElementById('mergeModalBackdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'mergeModalBackdrop') closeMergeModal();
+});
+
+function mergeContactsWithinList(list, personId) {
+  const dups = list.contacts.filter(c => c.personId === personId);
+  if (dups.length <= 1) return;
+  const keep = dups.reduce((best, c) => catWeight(c.category) > catWeight(best.category) ? c : best, dups[0]);
+  const others = dups.filter(c => c !== keep);
+  let mergedLog = (keep.callLog || []).slice();
+  others.forEach(c => {
+    mergedLog = mergedLog.concat(c.callLog || []);
+    if (!keep.ask && c.ask) keep.ask = c.ask;
+    if (!keep.lastGift && c.lastGift) keep.lastGift = c.lastGift;
+    if (c.notes && c.notes !== keep.notes) keep.notes = keep.notes ? (keep.notes + '\n\n' + c.notes) : c.notes;
+  });
+  mergedLog.sort((a,b) => (a.date||'').localeCompare(b.date||''));
+  keep.callLog = mergedLog;
+  const otherIds = new Set(others.map(c => c.id));
+  list.contacts = list.contacts.filter(c => !otherIds.has(c.id));
+}
+
+document.getElementById('confirmMergeBtn').addEventListener('click', async () => {
+  const ids = mergeCandidateIds;
+  if (ids.length < 2) { closeMergeModal(); return; }
+  const primaryId = ids[0];
+  const otherIds = ids.slice(1);
+  const merged = {};
+  MERGE_FIELDS.forEach(f => { merged[f.key] = document.getElementById('merge_' + f.key).value.trim(); });
+  if (!merged.name) { showToast('Name is required'); return; }
+
+  const people = ids.map(id => (peopleCache || []).find(p => p.id === id)).filter(Boolean);
+  const mergedHistorySet = new Set();
+  people.forEach(p => (p.list_history || []).forEach(lid => mergedHistorySet.add(lid)));
+  state.lists.forEach(l => { if (l.contacts.some(c => ids.includes(c.personId))) mergedHistorySet.add(l.id); });
+
+  const { error: updateErr } = await window.supabase.from('people')
+    .update({
+      name: merged.name, phone: merged.phone || null, email: merged.email || null,
+      address: merged.address || null, organization: merged.organization || null, occupation: merged.occupation || null,
+      list_history: [...mergedHistorySet], updated_at: new Date().toISOString(),
+    })
+    .eq('id', primaryId);
+  if (updateErr) { console.error(updateErr); showToast('Merge failed — check connection'); return; }
+
+  for (const otherId of otherIds) {
+    const { error: donErr } = await window.supabase.from('donations').update({ person_id: primaryId }).eq('person_id', otherId);
+    if (donErr) console.error(donErr);
+    const { error: delErr } = await window.supabase.from('people').delete().eq('id', otherId);
+    if (delErr) console.error(delErr);
+  }
+
+  state.lists.forEach(l => {
+    l.contacts.forEach(c => {
+      if (ids.includes(c.personId)) {
+        c.personId = primaryId;
+        Object.assign(c, { name: merged.name, phone: merged.phone, email: merged.email, address: merged.address, organization: merged.organization, occupation: merged.occupation });
+      }
+    });
+    mergeContactsWithinList(l, primaryId);
+  });
+  await saveData();
+
+  mergeSelectedIds.clear();
+  closeMergeModal();
+  await loadPeople(true);
+  renderMasterList();
+  renderAll();
+  showToast('Contacts merged');
 });
 
 // App data loads automatically once sign-in is confirmed (see supabase-ready listener above).

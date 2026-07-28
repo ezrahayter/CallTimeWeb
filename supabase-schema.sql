@@ -65,6 +65,10 @@ create table if not exists people (
 -- list can show list history even after they're removed from a list.
 alter table people add column if not exists list_history jsonb not null default '[]'::jsonb;
 
+alter table people add column if not exists address text;
+alter table people add column if not exists organization text;
+alter table people add column if not exists occupation text;
+
 create index if not exists people_phone_idx on people (phone) where phone is not null and phone <> '';
 create index if not exists people_email_idx on people (lower(email)) where email is not null and email <> '';
 
@@ -88,6 +92,13 @@ create policy "Authenticated users can update people"
   to authenticated
   using (true)
   with check (true);
+
+-- Needed so duplicate records can be removed after merging them together.
+drop policy if exists "Authenticated users can delete people" on people;
+create policy "Authenticated users can delete people"
+  on people for delete
+  to authenticated
+  using (true);
 
 do $$
 begin
