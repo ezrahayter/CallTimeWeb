@@ -1,0 +1,971 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Call Time</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;0,700;1,500&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<script type="module">
+  import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+  // ---- Fill these in with your own Supabase project values ----
+  // Supabase Dashboard → Project Settings → API
+  const SUPABASE_URL = 'https://zktthxpujljwbpiylvft.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InprdHRoeHB1amxqd2JwaXlsdmZ0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUyNTkxOTgsImV4cCI6MjEwMDgzNTE5OH0.BjiHQyZbDB6SceaoD5TTws0r5_H7x-ynfIwkdHwfPkg';
+  // ----------------------------------------------------------------
+
+  window.supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  window.dispatchEvent(new Event('supabase-ready'));
+</script>
+<style>
+  :root {
+    --ink: #1C2B44;
+    --parchment: #F7F3EA;
+    --brass: #B8922E;
+    --brass-dark: #8C6F22;
+    --slate: #5B6472;
+    --pledge: #3F7A5C;
+    --pledge-bg: #E7EFE9;
+    --rust: #A6503E;
+    --rust-bg: #F3E6E2;
+    --sky: #2C6A85;
+    --sky-bg: #E1EEF4;
+    --hairline: #DCD5C6;
+    --card-bg: #FFFFFF;
+    --amber-bg: #F7EFD9;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--parchment);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 20px 60px; }
+
+  .masthead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 14px;
+    margin-bottom: 22px;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .masthead-left { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .masthead h1 {
+    font-family: 'Lora', serif;
+    font-weight: 700;
+    font-size: 28px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .list-select-wrap { display: flex; align-items: center; gap: 8px; }
+  .list-select-wrap select {
+    font-family: 'Lora', serif; font-weight: 600; font-size: 15px;
+    border: 1px solid var(--hairline); border-radius: 4px; padding: 6px 10px; background: var(--card-bg);
+    color: var(--ink); max-width: 220px;
+  }
+  .today-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--slate);
+    background: var(--card-bg);
+    border: 1px solid var(--hairline);
+    padding: 6px 10px;
+    border-radius: 3px;
+  }
+
+  .grid { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--card-bg);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    padding: 18px;
+  }
+  .panel + .panel { margin-top: 18px; }
+  .panel h2 {
+    font-family: 'Lora', serif;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 14px;
+    color: var(--slate);
+  }
+  .therm-row { display: flex; gap: 18px; align-items: center; }
+  .therm-svg { flex-shrink: 0; }
+  .therm-stats { display: flex; flex-direction: column; gap: 10px; }
+  .therm-stat .num { font-family: 'Lora', serif; font-weight: 700; font-size: 26px; line-height: 1; }
+  .therm-stat .lbl { font-size: 11px; color: var(--slate); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 3px; }
+
+  .goal-edit { display: flex; gap: 6px; margin-top: 14px; }
+  .goal-edit input {
+    width: 60px; font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+    border: 1px solid var(--hairline); border-radius: 3px; padding: 4px 6px;
+  }
+  .goal-edit button { font-size: 11px; }
+
+  .roster-mini { font-size: 12px; color: var(--slate); line-height: 1.9; }
+  .roster-mini b { color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
+
+  button {
+    font-family: 'IBM Plex Sans', sans-serif;
+    cursor: pointer;
+    border-radius: 4px;
+    border: 1px solid var(--hairline);
+    background: var(--card-bg);
+    color: var(--ink);
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    transition: transform 0.06s ease, background 0.15s ease;
+  }
+  button:hover { background: #F1ECDF; }
+  button:active { transform: scale(0.97); }
+  button.primary { background: var(--ink); color: var(--parchment); border-color: var(--ink); }
+  button.primary:hover { background: #2A3D5C; }
+  button.ghost { background: transparent; border-color: transparent; color: var(--slate); }
+  button.ghost:hover { background: #EFE9DA; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.full { width: 100%; }
+
+  .call-card { padding: 0; }
+  .call-card .eyebrow {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--brass-dark);
+    font-weight: 700; margin-bottom: 6px;
+  }
+  .call-card h3 { font-family: 'Lora', serif; font-size: 24px; margin: 0 0 4px; }
+  .call-meta { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--slate); margin-bottom: 14px; }
+  .call-notes {
+    background: var(--amber-bg); border-left: 3px solid var(--brass);
+    padding: 10px 14px; font-size: 13.5px; line-height: 1.5; border-radius: 0 4px 4px 0;
+    margin-bottom: 16px; white-space: pre-wrap;
+  }
+  .call-notes.empty { color: var(--slate); font-style: italic; }
+  .log-note-input {
+    width: 100%; border: 1px solid var(--hairline); border-radius: 4px; padding: 8px 10px;
+    font-family: 'IBM Plex Sans', sans-serif; font-size: 13px; resize: vertical; min-height: 54px;
+    margin-bottom: 10px;
+  }
+  .cat-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .cat-btn { border-width: 1px; }
+  .cat-btn[data-cat="not-complete"] { background: #EFEDE7; border-color: var(--slate); color: var(--slate); }
+  .cat-btn[data-cat="current"] { background: var(--amber-bg); border-color: var(--brass); color: var(--brass-dark); }
+  .cat-btn[data-cat="needs-follow-up"] { background: var(--sky-bg); border-color: var(--sky); color: var(--sky); }
+  .cat-btn[data-cat="complete"] { background: var(--pledge-bg); border-color: var(--pledge); color: var(--pledge); }
+  .cat-btn.selected { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .log-actions { display: flex; gap: 8px; }
+  .empty-queue { text-align: center; padding: 40px 20px; color: var(--slate); }
+  .empty-queue .big { font-family: 'Lora', serif; font-size: 20px; color: var(--ink); margin-bottom: 6px; }
+
+  .roster-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; gap: 10px; flex-wrap: wrap; }
+  .roster-header h2 { margin: 0; }
+  .controls-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .controls-row input, .controls-row select {
+    border: 1px solid var(--hairline); border-radius: 4px; padding: 8px 10px; font-size: 13px;
+    font-family: 'IBM Plex Sans', sans-serif; background: var(--card-bg);
+  }
+  .controls-row input[type="text"] { min-width: 180px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--slate); padding: 8px 10px; border-bottom: 1px solid var(--hairline); font-weight: 600;
+  }
+  td { padding: 10px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  tr.contact-row:hover { background: #FBF9F3; cursor: pointer; }
+  .status-pill {
+    display: inline-block; font-size: 10.5px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.04em; padding: 3px 8px; border-radius: 10px;
+  }
+  .status-not-complete { background: #EFEDE7; color: var(--slate); }
+  .status-current { background: var(--amber-bg); color: var(--brass-dark); }
+  .status-needs-follow-up { background: var(--sky-bg); color: var(--sky); }
+  .status-complete { background: var(--pledge-bg); color: var(--pledge); }
+  .name-cell { font-weight: 600; }
+  .sub-cell { color: var(--slate); font-size: 12px; margin-top: 2px; }
+  .note-preview { color: var(--slate); font-size: 12px; max-width: 220px; }
+
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; background: rgba(28,43,68,0.45);
+    align-items: center; justify-content: center; z-index: 50; padding: 20px;
+  }
+  .modal-backdrop.show { display: flex; }
+  .modal {
+    background: var(--card-bg); border-radius: 8px; padding: 26px; width: 100%; max-width: 480px;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .modal h3 { font-family: 'Lora', serif; margin: 0 0 16px; font-size: 20px; }
+  .field { margin-bottom: 12px; }
+  .field label { display: block; font-size: 12px; color: var(--slate); margin-bottom: 4px; font-weight: 500; }
+  .field input, .field textarea, .field select {
+    width: 100%; border: 1px solid var(--hairline); border-radius: 4px; padding: 8px 10px;
+    font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
+  }
+  .field textarea { min-height: 60px; resize: vertical; }
+  .field-row { display: flex; gap: 10px; }
+  .field-row .field { flex: 1; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+
+  .call-log-list { font-size: 12.5px; color: var(--slate); margin-top: 14px; border-top: 1px dashed var(--hairline); padding-top: 10px; max-height: 160px; overflow-y: auto; }
+  .call-log-list .log-entry { margin-bottom: 8px; }
+  .call-log-list .log-entry b { color: var(--ink); }
+
+  .toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--ink); color: var(--parchment); padding: 10px 18px; border-radius: 5px;
+    font-size: 13px; opacity: 0; transition: opacity 0.25s ease; pointer-events: none; z-index: 100;
+  }
+  .toast.show { opacity: 1; }
+
+  .footer-note { text-align: center; font-size: 11.5px; color: var(--slate); margin-top: 30px; }
+  .csv-help { font-size: 11.5px; color: var(--slate); margin-top: 6px; line-height: 1.5; }
+  #csvFileInput { display: none; }
+
+  .outcome-modal { max-width: 360px; }
+  .outcome-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+  .outcome-option {
+    text-align: left; padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 5px;
+    background: var(--card-bg); font-size: 13.5px; font-weight: 500;
+  }
+  .outcome-option:hover { background: var(--amber-bg); border-color: var(--brass); }
+
+  /* Login screen */
+  #loginScreen {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  #loginScreen.hidden { display: none; }
+  #appRoot.hidden { display: none; }
+  .login-card {
+    background: var(--card-bg); border: 1px solid var(--hairline); border-radius: 8px;
+    padding: 34px; width: 100%; max-width: 360px;
+  }
+  .login-card h1 { font-family: 'Lora', serif; font-size: 26px; margin: 0 0 4px; }
+  .login-card .sub { font-size: 12px; color: var(--slate); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 22px; }
+  .login-card .field { margin-bottom: 14px; }
+  .login-card .field label { display: block; font-size: 12px; color: var(--slate); margin-bottom: 4px; }
+  .login-card .field input {
+    width: 100%; border: 1px solid var(--hairline); border-radius: 4px; padding: 9px 11px; font-size: 14px;
+    font-family: 'IBM Plex Sans', sans-serif;
+  }
+  .login-error { color: var(--rust); font-size: 12.5px; margin-bottom: 12px; min-height: 16px; }
+  .top-bar-auth { display: flex; align-items: center; gap: 10px; }
+  .top-bar-auth .who { font-size: 12px; color: var(--slate); }
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <div class="login-card">
+    <h1>Call Time</h1>
+    <div class="sub">Sign in to continue</div>
+    <div class="login-error" id="loginError"></div>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="loginEmail" autocomplete="username">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="loginPassword" autocomplete="current-password">
+    </div>
+    <button class="primary full" id="loginBtn">Sign in</button>
+  </div>
+</div>
+
+<div id="appRoot" class="hidden">
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="masthead-left">
+      <h1>Call Time</h1>
+      <div class="list-select-wrap">
+        <select id="listSelect"></select>
+        <button class="ghost" id="newListBtn" title="Add a new candidate list">+ New list</button>
+      </div>
+    </div>
+    <div class="top-bar-auth">
+      <div class="today-tag" id="dateTag"></div>
+      <span class="who" id="whoAmI"></span>
+      <button class="ghost" id="signOutBtn">Sign out</button>
+    </div>
+  </div>
+
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <h2>Today's Tally</h2>
+        <div class="therm-row">
+          <svg class="therm-svg" width="34" height="120" viewBox="0 0 34 120">
+            <rect x="12" y="4" width="10" height="96" rx="5" fill="#EFEADA" stroke="var(--hairline)"/>
+            <rect id="thermFill" x="12" y="100" width="10" height="0" rx="5" fill="var(--brass)"/>
+            <circle cx="17" cy="108" r="12" fill="var(--brass)"/>
+            <circle cx="17" cy="108" r="6" fill="#FFF8E8"/>
+          </svg>
+          <div class="therm-stats">
+            <div class="therm-stat">
+              <div class="num" id="callsToday">0</div>
+              <div class="lbl">Calls logged / <span id="callGoalLbl">10</span> goal</div>
+            </div>
+          </div>
+        </div>
+        <div class="goal-edit">
+          <input type="number" id="goalInput" min="1" placeholder="goal">
+          <button class="ghost" id="setGoalBtn">Set daily goal</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>List Snapshot</h2>
+        <div class="roster-mini" id="rosterMini">—</div>
+      </div>
+
+      <div class="panel">
+        <h2>Data</h2>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <button class="full" id="importBtn">Import CSV</button>
+          <input type="file" id="csvFileInput" accept=".csv">
+          <div class="csv-help">Columns: Name, Phone, Email, Ask, Last Gift, Notes, Category (optional — Not Complete / Current / Needs Follow Up / Complete)</div>
+          <button class="full" id="exportBtn">Export list as CSV</button>
+          <button class="full primary" id="addContactBtn">+ Add contact</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel" style="margin-bottom:24px;">
+        <h2>Up Next</h2>
+        <div id="callCardWrap"></div>
+      </div>
+
+      <div class="roster-header">
+        <h2 style="font-family:'Lora',serif; font-size:18px; margin:0;">Full Roster</h2>
+      </div>
+      <div class="controls-row" style="margin-bottom:12px;">
+        <input type="text" id="searchInput" placeholder="Search name, phone, email...">
+        <select id="statusFilter">
+          <option value="">All categories</option>
+          <option value="not-complete">Not Complete</option>
+          <option value="current">Current</option>
+          <option value="needs-follow-up">Needs Follow Up</option>
+          <option value="complete">Complete</option>
+        </select>
+      </div>
+      <div class="panel" style="padding:0; overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Ask</th>
+              <th>Category</th>
+              <th>Last note</th>
+            </tr>
+          </thead>
+          <tbody id="rosterBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-note">Shared data — visible and editable by anyone with this link. Keep it within the team.</div>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal">
+    <h3 id="modalTitle">Add Contact</h3>
+    <input type="hidden" id="editId">
+    <div class="field">
+      <label>Name</label>
+      <input type="text" id="fName" placeholder="Full name">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Phone</label>
+        <input type="text" id="fPhone" placeholder="(555) 555-5555">
+      </div>
+      <div class="field">
+        <label>Email</label>
+        <input type="text" id="fEmail" placeholder="name@email.com">
+      </div>
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Suggested ask</label>
+        <input type="text" id="fAsk" placeholder="$250">
+      </div>
+      <div class="field">
+        <label>Last gift</label>
+        <input type="text" id="fLastGift" placeholder="$100, March 2026">
+      </div>
+    </div>
+    <div class="field">
+      <label>Category</label>
+      <select id="fCategory">
+        <option value="not-complete">Not Complete</option>
+        <option value="current">Current</option>
+        <option value="needs-follow-up">Needs Follow Up</option>
+        <option value="complete">Complete</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Background / talking points</label>
+      <textarea id="fNotes" placeholder="Local business owner, met at chamber event, cares about small-business tax policy..."></textarea>
+    </div>
+    <div class="call-log-list" id="editCallLog"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="deleteContactBtn" style="margin-right:auto; display:none;">Delete</button>
+      <button class="ghost" id="cancelModalBtn">Cancel</button>
+      <button class="primary" id="saveContactBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="outcomeBackdrop">
+  <div class="modal outcome-modal">
+    <h3>Call outcome</h3>
+    <div class="outcome-grid" id="outcomeGrid"></div>
+    <div class="modal-actions">
+      <button class="ghost" id="cancelOutcomeBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const todayStr = () => new Date().toISOString().slice(0,10);
+document.getElementById('dateTag').textContent = new Date().toLocaleDateString(undefined, {weekday:'short', month:'short', day:'numeric'});
+
+let state = { lists: [] };
+let activeListId = null;
+let searchQuery = '';
+let statusFilter = '';
+let realtimeChannel = null;
+
+function uid(prefix) { return prefix + '_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+function activeList() {
+  return state.lists.find(l => l.id === activeListId) || state.lists[0];
+}
+
+async function loadData() {
+  try {
+    const { data, error } = await window.supabase.from('app_state').select('data').eq('id', 'main').single();
+    if (error) throw error;
+    state = (data && data.data) || { lists: [] };
+  } catch (e) {
+    console.error(e);
+    state = { lists: [] };
+  }
+  if (!state.lists || !state.lists.length) {
+    state.lists = [{ id: uid('list'), name: 'New Candidate', goal: 10, contacts: [] }];
+  }
+  if (!activeListId || !state.lists.some(l => l.id === activeListId)) {
+    activeListId = state.lists[0].id;
+  }
+  renderListSelect();
+  renderAll();
+  setupRealtime();
+}
+
+async function saveData() {
+  try {
+    const { error } = await window.supabase.from('app_state')
+      .upsert({ id: 'main', data: state, updated_at: new Date().toISOString() });
+    if (error) throw error;
+  } catch (e) {
+    console.error(e);
+    showToast('Save failed — check connection');
+  }
+}
+
+function setupRealtime() {
+  if (realtimeChannel) return;
+  realtimeChannel = window.supabase
+    .channel('app_state_changes')
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'app_state', filter: 'id=eq.main' }, (payload) => {
+      // Pull in a teammate's changes without overwriting what you're mid-typing.
+      if (payload.new && payload.new.data) {
+        state = payload.new.data;
+        if (!state.lists.some(l => l.id === activeListId)) activeListId = state.lists[0]?.id;
+        renderListSelect();
+        renderAll();
+      }
+    })
+    .subscribe();
+}
+
+// ---- Auth ----
+function showApp(user) {
+  document.getElementById('loginScreen').classList.add('hidden');
+  document.getElementById('appRoot').classList.remove('hidden');
+  document.getElementById('whoAmI').textContent = user?.email || '';
+  loadData();
+}
+
+function showLogin() {
+  document.getElementById('appRoot').classList.add('hidden');
+  document.getElementById('loginScreen').classList.remove('hidden');
+}
+
+window.addEventListener('supabase-ready', async () => {
+  const { data: { session } } = await window.supabase.auth.getSession();
+  if (session?.user) {
+    showApp(session.user);
+  } else {
+    showLogin();
+  }
+
+  window.supabase.auth.onAuthStateChange((_event, session) => {
+    if (session?.user) showApp(session.user);
+    else showLogin();
+  });
+
+  document.getElementById('loginBtn').addEventListener('click', async () => {
+    const email = document.getElementById('loginEmail').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    const errEl = document.getElementById('loginError');
+    errEl.textContent = '';
+    if (!email || !password) { errEl.textContent = 'Enter your email and password.'; return; }
+    const { error } = await window.supabase.auth.signInWithPassword({ email, password });
+    if (error) errEl.textContent = error.message;
+  });
+
+  document.getElementById('loginPassword').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') document.getElementById('loginBtn').click();
+  });
+
+  document.getElementById('signOutBtn').addEventListener('click', async () => {
+    await window.supabase.auth.signOut();
+  });
+});
+
+
+function catLabel(c) {
+  return { 'not-complete': 'Not Complete', 'current': 'Current', 'needs-follow-up': 'Needs Follow Up', 'complete': 'Complete' }[c] || c;
+}
+
+function renderListSelect() {
+  const sel = document.getElementById('listSelect');
+  sel.innerHTML = state.lists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+  sel.value = activeListId;
+}
+
+document.getElementById('listSelect').addEventListener('change', (e) => {
+  activeListId = e.target.value;
+  renderAll();
+});
+
+document.getElementById('newListBtn').addEventListener('click', async () => {
+  const name = prompt('Name this candidate / list:');
+  if (!name || !name.trim()) return;
+  const list = { id: uid('list'), name: name.trim(), goal: 10, contacts: [] };
+  state.lists.push(list);
+  activeListId = list.id;
+  await saveData();
+  renderListSelect();
+  renderAll();
+  showToast('List created: ' + list.name);
+});
+
+function renderAll() {
+  const list = activeList();
+  if (!list) return;
+  renderThermometer(list);
+  renderRosterMini(list);
+  renderUpNext(list);
+  renderTable(list);
+  document.getElementById('goalInput').value = list.goal || 10;
+  document.getElementById('callGoalLbl').textContent = list.goal || 10;
+}
+
+function todaysLogEntries(list) {
+  const t = todayStr();
+  let entries = [];
+  list.contacts.forEach(c => {
+    (c.callLog || []).forEach(l => { if (l.date === t) entries.push(l); });
+  });
+  return entries;
+}
+
+function renderThermometer(list) {
+  const entries = todaysLogEntries(list);
+  document.getElementById('callsToday').textContent = entries.length;
+  const pct = Math.max(0, Math.min(1, entries.length / (list.goal || 1)));
+  const fillHeight = 96 * pct;
+  document.getElementById('thermFill').setAttribute('y', 100 - fillHeight);
+  document.getElementById('thermFill').setAttribute('height', fillHeight);
+}
+
+function renderRosterMini(list) {
+  const counts = {};
+  list.contacts.forEach(c => counts[c.category] = (counts[c.category]||0) + 1);
+  const order = ['current','needs-follow-up','not-complete','complete'];
+  const lines = order.filter(s => counts[s]).map(s => `<div><b>${counts[s]}</b> — ${catLabel(s)}</div>`);
+  document.getElementById('rosterMini').innerHTML = lines.length ? lines.join('') : 'No contacts yet.';
+}
+
+function catWeight(c) { return { 'needs-follow-up': 3, 'current': 2, 'not-complete': 1, 'complete': 0 }[c] || 0; }
+
+function renderInlineLog(c) {
+  if (!c.callLog || !c.callLog.length) {
+    return '<span style="font-style:italic;">No calls logged yet for this contact.</span>';
+  }
+  return '<b style="color:var(--ink);">Notes from this call log</b><br>' + c.callLog.slice().reverse().slice(0, 6).map(l =>
+    `<div class="log-entry">${escapeHtml(l.note)}</div>`
+  ).join('');
+}
+
+let skippedIds = new Set();
+
+function renderUpNext(list) {
+  const queue = list.contacts.filter(c => c.category !== 'complete' && !skippedIds.has(c.id))
+    .sort((a,b) => (catWeight(b.category) - catWeight(a.category)) || ((a.priority||0) - (b.priority||0)));
+  const wrap = document.getElementById('callCardWrap');
+  if (!queue.length) {
+    const hasSkipped = skippedIds.size > 0 && list.contacts.some(c => c.category !== 'complete');
+    wrap.innerHTML = hasSkipped
+      ? `<div class="empty-queue"><div class="big">You've gone through everyone</div>Skipped contacts are still waiting.<br><br><button class="ghost" id="resetSkipBtn">Reset skipped</button></div>`
+      : `<div class="empty-queue"><div class="big">Queue is clear</div>Add contacts or import a list to get started.</div>`;
+    if (hasSkipped) {
+      document.getElementById('resetSkipBtn').addEventListener('click', () => {
+        skippedIds.clear();
+        renderUpNext(activeList());
+      });
+    }
+    return;
+  }
+  const c = queue[0];
+  wrap.innerHTML = `
+    <div class="call-card">
+      <div class="eyebrow">${catLabel(c.category)}</div>
+      <h3>${escapeHtml(c.name)}</h3>
+      <div class="call-meta">
+        ${c.phone ? `<span>${escapeHtml(c.phone)}</span>` : ''}
+        ${c.email ? `<span>${escapeHtml(c.email)}</span>` : ''}
+        ${c.ask ? `<span>Ask: ${escapeHtml(c.ask)}</span>` : ''}
+        ${c.lastGift ? `<span>Last: ${escapeHtml(c.lastGift)}</span>` : ''}
+      </div>
+      <div class="call-notes ${c.notes ? '' : 'empty'}">${c.notes ? escapeHtml(c.notes) : 'No background notes on file.'}</div>
+      <textarea class="log-note-input" id="quickNote" placeholder="Notes from this call..."></textarea>
+      <div class="cat-row" id="catRow">
+        <button class="cat-btn" data-cat="not-complete">Not Complete</button>
+        <button class="cat-btn" data-cat="current">Current</button>
+        <button class="cat-btn" data-cat="needs-follow-up">Needs Follow Up</button>
+        <button class="cat-btn" data-cat="complete">Complete</button>
+      </div>
+      <div class="log-actions">
+        <button class="primary" id="logCallBtn">Log call</button>
+        <button class="ghost" id="skipBtn">Skip to next →</button>
+        <button class="ghost" data-action="edit">Edit contact</button>
+      </div>
+      <div class="call-log-list" id="inlineCallLog">${renderInlineLog(c)}</div>
+    </div>
+  `;
+  let chosenCat = c.category;
+  const catRow = wrap.querySelector('#catRow');
+  catRow.querySelectorAll('.cat-btn').forEach(btn => {
+    if (btn.dataset.cat === chosenCat) btn.classList.add('selected');
+    btn.addEventListener('click', () => {
+      chosenCat = btn.dataset.cat;
+      catRow.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+    });
+  });
+  wrap.querySelector('#logCallBtn').addEventListener('click', () => openOutcomePopup(c.id, chosenCat));
+  wrap.querySelector('#skipBtn').addEventListener('click', () => {
+    skippedIds.add(c.id);
+    renderUpNext(activeList());
+  });
+  wrap.querySelector('[data-action="edit"]').addEventListener('click', () => openModal(c.id));
+}
+
+const OUTCOME_OPTIONS = ['Connected', 'No answer', 'Voicemail', 'Wrong number', 'Left message', 'Callback requested', 'Not interested'];
+
+function shortDate() {
+  const d = new Date();
+  return (d.getMonth() + 1) + '.' + d.getDate();
+}
+
+function openOutcomePopup(contactId, category) {
+  const grid = document.getElementById('outcomeGrid');
+  grid.innerHTML = OUTCOME_OPTIONS.map(o => `<button class="outcome-option" data-outcome="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join('');
+  grid.querySelectorAll('.outcome-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      closeOutcomePopup();
+      logCall(contactId, category, btn.dataset.outcome);
+    });
+  });
+  document.getElementById('outcomeBackdrop').classList.add('show');
+}
+
+function closeOutcomePopup() {
+  document.getElementById('outcomeBackdrop').classList.remove('show');
+}
+
+document.getElementById('cancelOutcomeBtn').addEventListener('click', closeOutcomePopup);
+document.getElementById('outcomeBackdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'outcomeBackdrop') closeOutcomePopup();
+});
+
+async function logCall(id, category, outcome) {
+  const list = activeList();
+  const c = list.contacts.find(x => x.id === id);
+  if (!c) return;
+  const typedNote = document.getElementById('quickNote') ? document.getElementById('quickNote').value.trim() : '';
+  const tag = shortDate() + ' ' + outcome;
+  const note = typedNote ? (tag + ' — ' + typedNote) : tag;
+  c.callLog = c.callLog || [];
+  c.callLog.push({ date: todayStr(), note, category });
+  c.category = category;
+  c.priority = Date.now();
+  skippedIds.delete(id);
+  await saveData();
+  renderAll();
+  showToast('Call logged: ' + outcome);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function filteredContacts(list) {
+  return list.contacts.filter(c => {
+    if (statusFilter && c.category !== statusFilter) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const hay = (c.name + ' ' + (c.phone||'') + ' ' + (c.email||'')).toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  }).sort((a,b) => (catWeight(b.category) - catWeight(a.category)));
+}
+
+function renderTable(list) {
+  const rows = filteredContacts(list);
+  const tbody = document.getElementById('rosterBody');
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--slate); padding:24px;">No contacts match.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map(c => {
+    const lastLog = (c.callLog && c.callLog.length) ? c.callLog[c.callLog.length-1] : null;
+    return `
+    <tr class="contact-row" data-id="${c.id}">
+      <td>
+        <div class="name-cell">${escapeHtml(c.name)}</div>
+        <div class="sub-cell">${escapeHtml(c.phone || c.email || '')}</div>
+      </td>
+      <td>${escapeHtml(c.ask || '—')}</td>
+      <td><span class="status-pill status-${c.category}">${catLabel(c.category)}</span></td>
+      <td class="note-preview">${lastLog && lastLog.note ? escapeHtml(lastLog.note) : '—'}</td>
+    </tr>
+  `;
+  }).join('');
+  tbody.querySelectorAll('.contact-row').forEach(tr => {
+    tr.addEventListener('click', () => openModal(tr.dataset.id));
+  });
+}
+
+function openModal(id) {
+  const list = activeList();
+  const modal = document.getElementById('modalBackdrop');
+  const isEdit = !!id;
+  document.getElementById('modalTitle').textContent = isEdit ? 'Edit Contact' : 'Add Contact';
+  document.getElementById('deleteContactBtn').style.display = isEdit ? 'inline-block' : 'none';
+  const c = isEdit ? list.contacts.find(x => x.id === id) : null;
+  document.getElementById('editId').value = id || '';
+  document.getElementById('fName').value = c ? c.name : '';
+  document.getElementById('fPhone').value = c ? (c.phone||'') : '';
+  document.getElementById('fEmail').value = c ? (c.email||'') : '';
+  document.getElementById('fAsk').value = c ? (c.ask||'') : '';
+  document.getElementById('fLastGift').value = c ? (c.lastGift||'') : '';
+  document.getElementById('fNotes').value = c ? (c.notes||'') : '';
+  document.getElementById('fCategory').value = c ? c.category : 'not-complete';
+  const logDiv = document.getElementById('editCallLog');
+  if (c && c.callLog && c.callLog.length) {
+    logDiv.innerHTML = '<b style="color:var(--ink);">Call history</b><br>' + c.callLog.slice().reverse().map(l =>
+      `<div class="log-entry"><b>${l.date}</b> — ${catLabel(l.category)}${l.note ? ': '+escapeHtml(l.note) : ''}</div>`
+    ).join('');
+  } else {
+    logDiv.innerHTML = '';
+  }
+  modal.classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('modalBackdrop').classList.remove('show');
+}
+
+document.getElementById('addContactBtn').addEventListener('click', () => openModal(null));
+document.getElementById('cancelModalBtn').addEventListener('click', closeModal);
+document.getElementById('modalBackdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'modalBackdrop') closeModal();
+});
+
+document.getElementById('saveContactBtn').addEventListener('click', async () => {
+  const list = activeList();
+  const id = document.getElementById('editId').value;
+  const name = document.getElementById('fName').value.trim();
+  if (!name) { showToast('Name is required'); return; }
+  const data = {
+    name,
+    phone: document.getElementById('fPhone').value.trim(),
+    email: document.getElementById('fEmail').value.trim(),
+    ask: document.getElementById('fAsk').value.trim(),
+    lastGift: document.getElementById('fLastGift').value.trim(),
+    notes: document.getElementById('fNotes').value.trim(),
+    category: document.getElementById('fCategory').value,
+  };
+  if (id) {
+    const c = list.contacts.find(x => x.id === id);
+    Object.assign(c, data);
+  } else {
+    list.contacts.push({ id: uid('c'), ...data, priority: Date.now(), callLog: [] });
+  }
+  await saveData();
+  closeModal();
+  renderAll();
+  showToast('Saved');
+});
+
+document.getElementById('deleteContactBtn').addEventListener('click', async () => {
+  const list = activeList();
+  const id = document.getElementById('editId').value;
+  list.contacts = list.contacts.filter(x => x.id !== id);
+  await saveData();
+  closeModal();
+  renderAll();
+  showToast('Contact deleted');
+});
+
+document.getElementById('searchInput').addEventListener('input', (e) => {
+  searchQuery = e.target.value;
+  renderTable(activeList());
+});
+document.getElementById('statusFilter').addEventListener('change', (e) => {
+  statusFilter = e.target.value;
+  renderTable(activeList());
+});
+
+document.getElementById('setGoalBtn').addEventListener('click', async () => {
+  const v = parseInt(document.getElementById('goalInput').value, 10);
+  if (v && v > 0) {
+    activeList().goal = v;
+    await saveData();
+    renderAll();
+    showToast('Daily goal updated');
+  }
+});
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const list = activeList();
+  const headers = ['Name','Phone','Email','Ask','Last Gift','Category','Notes'];
+  const rows = list.contacts.map(c => [c.name, c.phone, c.email, c.ask, c.lastGift, catLabel(c.category), c.notes]);
+  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], {type: 'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = list.name.replace(/[^a-z0-9]+/gi,'-') + '-roster-' + todayStr() + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i], next = text[i+1];
+    if (inQuotes) {
+      if (ch === '"' && next === '"') { field += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { field += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && next === '\n') i++;
+        row.push(field); field = '';
+        if (row.length > 1 || row[0] !== '') rows.push(row);
+        row = [];
+      } else { field += ch; }
+    }
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function normalizeCategory(raw) {
+  const s = (raw||'').toLowerCase().trim();
+  if (!s) return 'not-complete';
+  if (s.includes('follow')) return 'needs-follow-up';
+  if (s.includes('current')) return 'current';
+  if (s.includes('complete') && !s.includes('not')) return 'complete';
+  if (s.includes('not')) return 'not-complete';
+  return 'not-complete';
+}
+
+document.getElementById('importBtn').addEventListener('click', () => {
+  document.getElementById('csvFileInput').click();
+});
+
+document.getElementById('csvFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  const rows = parseCsv(text);
+  if (!rows.length) { showToast('CSV appears empty'); return; }
+  const header = rows[0].map(h => h.toLowerCase().trim());
+  const idx = {
+    name: header.findIndex(h => h.includes('name')),
+    phone: header.findIndex(h => h.includes('phone')),
+    email: header.findIndex(h => h.includes('email')),
+    ask: header.findIndex(h => h.includes('ask')),
+    lastGift: header.findIndex(h => h.includes('last')),
+    notes: header.findIndex(h => h.includes('note')),
+    category: header.findIndex(h => h.includes('categ') || h.includes('status')),
+  };
+  if (idx.name === -1) { showToast('CSV needs a Name column'); return; }
+  const list = activeList();
+  let added = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const name = (r[idx.name] || '').trim();
+    if (!name) continue;
+    list.contacts.push({
+      id: uid('c'),
+      name,
+      phone: idx.phone > -1 ? (r[idx.phone]||'').trim() : '',
+      email: idx.email > -1 ? (r[idx.email]||'').trim() : '',
+      ask: idx.ask > -1 ? (r[idx.ask]||'').trim() : '',
+      lastGift: idx.lastGift > -1 ? (r[idx.lastGift]||'').trim() : '',
+      notes: idx.notes > -1 ? (r[idx.notes]||'').trim() : '',
+      category: idx.category > -1 ? normalizeCategory(r[idx.category]) : 'not-complete',
+      priority: Date.now(),
+      callLog: []
+    });
+    added++;
+  }
+  await saveData();
+  renderAll();
+  showToast(`Imported ${added} contact${added === 1 ? '' : 's'}`);
+  e.target.value = '';
+});
+
+// App data loads automatically once sign-in is confirmed (see supabase-ready listener above).
+</script>
+</div>
+</body>
+</html>
