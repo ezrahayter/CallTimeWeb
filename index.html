@@ -432,6 +432,7 @@
             <th>Name</th>
             <th>Organization / Occupation</th>
             <th>Contact</th>
+            <th>Address</th>
             <th>On lists</th>
           </tr>
         </thead>
@@ -1426,7 +1427,7 @@ function updateMergeButton() {
 
 async function renderMasterList() {
   const tbody = document.getElementById('masterListBody');
-  tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--slate); padding:24px;">Loading…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--slate); padding:24px;">Loading…</td></tr>`;
   await loadPeople(true);
   const validIds = new Set((peopleCache || []).map(p => p.id));
   mergeSelectedIds.forEach(id => { if (!validIds.has(id)) mergeSelectedIds.delete(id); });
@@ -1442,7 +1443,7 @@ async function renderMasterList() {
     (p.occupation||'').toLowerCase().includes(q)
   ).slice().sort((a,b) => a.name.localeCompare(b.name));
   if (!people.length) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--slate); padding:24px;">${(peopleCache||[]).length ? 'No contacts match.' : 'No contacts yet — add or import contacts in a candidate list to build this out.'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--slate); padding:24px;">${(peopleCache||[]).length ? 'No contacts match.' : 'No contacts yet — add or import contacts in a candidate list to build this out.'}</td></tr>`;
     return;
   }
   tbody.innerHTML = people.map(p => {
@@ -1451,13 +1452,14 @@ async function renderMasterList() {
       ? `<div class="lists-pill-row">${entries.map(e => `<span class="lists-pill${e.current ? '' : ' lists-pill-past'}">${escapeHtml(e.list.name)}${e.current ? '' : ' (past)'}</span>`).join('')}</div>`
       : '<span style="color:var(--slate); font-style:italic;">Not on any list</span>';
     const orgLine = [p.occupation, p.organization].filter(Boolean).join(' at ');
-    const contactLine = [p.phone, p.email, p.address].filter(Boolean).join(' · ');
+    const contactLine = [p.phone, p.email].filter(Boolean).join(' · ');
     return `
       <tr class="contact-row" data-person-id="${p.id}">
         <td><input type="checkbox" class="merge-checkbox" data-person-id="${p.id}" ${mergeSelectedIds.has(p.id) ? 'checked' : ''}></td>
         <td><div class="name-cell">${escapeHtml(p.name)}</div></td>
         <td class="sub-cell">${orgLine ? escapeHtml(orgLine) : '—'}</td>
         <td class="sub-cell">${contactLine ? escapeHtml(contactLine) : '—'}</td>
+        <td class="sub-cell">${p.address ? escapeHtml(p.address) : '—'}</td>
         <td>${pillsHtml}</td>
       </tr>
     `;
