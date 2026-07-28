@@ -215,6 +215,26 @@
   .call-log-list .log-entry { margin-bottom: 8px; }
   .call-log-list .log-entry b { color: var(--ink); }
 
+  .donations-section { margin-top: 16px; border-top: 1px dashed var(--hairline); padding-top: 10px; }
+  .donations-section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--slate); margin: 0 0 8px; }
+  .donations-list { font-size: 12.5px; max-height: 130px; overflow-y: auto; margin-bottom: 10px; }
+  .donations-list .donation-entry { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .donations-list .donation-entry .amt { color: var(--pledge); font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
+  .donations-list .empty { color: var(--slate); font-style: italic; }
+  .donation-form { display: flex; gap: 6px; align-items: flex-end; }
+  .donation-form .field { margin-bottom: 0; }
+  .donation-form input[type="text"], .donation-form input[type="number"], .donation-form input[type="date"] { font-size: 12.5px; padding: 6px 8px; }
+  .donation-form .amt-field { width: 90px; }
+  .donation-form .date-field { width: 130px; }
+  .donation-form .note-field { flex: 1; }
+
+  .directory-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: 5px; padding: 6px 10px; margin-top: 8px; }
+  .directory-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--hairline); font-size: 13px; }
+  .directory-row:last-child { border-bottom: none; }
+  .directory-row .who { flex: 1; }
+  .directory-row .sub { color: var(--slate); font-size: 11.5px; }
+  .directory-empty { color: var(--slate); font-style: italic; font-size: 12.5px; padding: 8px 0; }
+
   .toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
     background: var(--ink); color: var(--parchment); padding: 10px 18px; border-radius: 5px;
@@ -416,10 +436,48 @@
       <textarea id="fNotes" placeholder="Local business owner, met at chamber event, cares about small-business tax policy..."></textarea>
     </div>
     <div class="call-log-list" id="editCallLog"></div>
+    <div class="donations-section" id="donationsSection" style="display:none;">
+      <h4>Donation history</h4>
+      <div class="donations-list" id="donationsList"></div>
+      <div class="donation-form">
+        <div class="field amt-field">
+          <label>Amount</label>
+          <input type="number" id="donationAmount" placeholder="250">
+        </div>
+        <div class="field date-field">
+          <label>Date</label>
+          <input type="date" id="donationDate">
+        </div>
+        <div class="field note-field">
+          <label>Note</label>
+          <input type="text" id="donationNote" placeholder="e.g. 2025 fall gala">
+        </div>
+        <button class="ghost" id="addDonationBtn">Add</button>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="ghost" id="deleteContactBtn" style="margin-right:auto; display:none;">Delete</button>
       <button class="ghost" id="cancelModalBtn">Cancel</button>
       <button class="primary" id="saveContactBtn">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="newListBackdrop">
+  <div class="modal">
+    <h3>New list</h3>
+    <div class="field">
+      <label>List name</label>
+      <input type="text" id="newListNameInput" placeholder="e.g. Fall Gala Prospects">
+    </div>
+    <div class="field">
+      <label>Add people from your directory (optional — you can also import a CSV/Excel after creating the list)</label>
+      <input type="text" id="directorySearchInput" placeholder="Search directory...">
+      <div class="directory-list" id="directoryListEl"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" id="cancelNewListBtn">Cancel</button>
+      <button class="primary" id="createNewListBtn">Create list</button>
     </div>
   </div>
 </div>
@@ -446,6 +504,8 @@ let activeListId = null;
 let searchQuery = '';
 let statusFilter = '';
 let realtimeChannel = null;
+let peopleCache = null;
+let selectedDirectoryIds = new Set();
 
 function uid(prefix) { return prefix + '_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 
@@ -478,6 +538,7 @@ async function loadData() {
   renderListSelect();
   renderAll();
   setupRealtime();
+  loadPeople();
 }
 
 async function saveData() {
@@ -489,6 +550,40 @@ async function saveData() {
     console.error(e);
     showToast('Save failed — check connection');
   }
+}
+
+// ---- Master contact directory (people + donation history) ----
+function normPhone(p) { return (p || '').replace(/\D/g, ''); }
+function normEmail(e) { return (e || '').trim().toLowerCase(); }
+
+async function loadPeople(force) {
+  if (peopleCache && !force) return peopleCache;
+  const { data, error } = await window.supabase.from('people').select('*').order('name');
+  if (error) { console.error(error); return peopleCache || []; }
+  peopleCache = data || [];
+  return peopleCache;
+}
+
+async function findOrCreatePerson({ name, phone, email }) {
+  const people = await loadPeople();
+  const np = normPhone(phone), ne = normEmail(email);
+  let match = null;
+  if (np) match = people.find(p => np && normPhone(p.phone) === np);
+  if (!match && ne) match = people.find(p => ne && normEmail(p.email) === ne);
+  if (match) return match.id;
+  const { data, error } = await window.supabase.from('people')
+    .insert({ name, phone: phone || null, email: email || null })
+    .select().single();
+  if (error) { console.error(error); return null; }
+  peopleCache.push(data);
+  return data.id;
+}
+
+async function loadDonations(personId) {
+  const { data, error } = await window.supabase.from('donations')
+    .select('*').eq('person_id', personId).order('donated_on', { ascending: false, nullsFirst: false });
+  if (error) { console.error(error); return []; }
+  return data || [];
 }
 
 function setupRealtime() {
@@ -569,14 +664,66 @@ document.getElementById('listSelect').addEventListener('change', (e) => {
 });
 
 document.getElementById('newListBtn').addEventListener('click', async () => {
-  const name = prompt('Name this candidate / list:');
-  if (!name || !name.trim()) return;
-  const list = { id: uid('list'), name: name.trim(), goal: 10, contacts: [] };
+  document.getElementById('newListNameInput').value = '';
+  document.getElementById('directorySearchInput').value = '';
+  selectedDirectoryIds = new Set();
+  await loadPeople();
+  renderDirectoryList('');
+  document.getElementById('newListBackdrop').classList.add('show');
+});
+
+document.getElementById('cancelNewListBtn').addEventListener('click', () => {
+  document.getElementById('newListBackdrop').classList.remove('show');
+});
+document.getElementById('newListBackdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'newListBackdrop') document.getElementById('newListBackdrop').classList.remove('show');
+});
+
+function renderDirectoryList(query) {
+  const el = document.getElementById('directoryListEl');
+  const q = (query || '').toLowerCase().trim();
+  const people = (peopleCache || []).filter(p =>
+    !q || p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q)
+  );
+  if (!people.length) {
+    el.innerHTML = '<div class="directory-empty">No one in your directory yet — import a CSV/Excel or add contacts to build it up.</div>';
+    return;
+  }
+  el.innerHTML = people.map(p => `
+    <label class="directory-row">
+      <input type="checkbox" data-person-id="${p.id}" ${selectedDirectoryIds.has(p.id) ? 'checked' : ''}>
+      <span class="who">${escapeHtml(p.name)}<div class="sub">${escapeHtml(p.phone || p.email || '')}</div></span>
+    </label>
+  `).join('');
+  el.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const pid = cb.dataset.personId;
+      if (cb.checked) selectedDirectoryIds.add(pid); else selectedDirectoryIds.delete(pid);
+    });
+  });
+}
+
+document.getElementById('directorySearchInput').addEventListener('input', (e) => {
+  renderDirectoryList(e.target.value);
+});
+
+document.getElementById('createNewListBtn').addEventListener('click', async () => {
+  const name = document.getElementById('newListNameInput').value.trim();
+  if (!name) { showToast('List needs a name'); return; }
+  const contacts = (peopleCache || [])
+    .filter(p => selectedDirectoryIds.has(p.id))
+    .map(p => ({
+      id: uid('c'), name: p.name, phone: p.phone || '', email: p.email || '',
+      ask: '', lastGift: '', notes: '', category: 'not-complete',
+      personId: p.id, priority: Date.now(), callLog: []
+    }));
+  const list = { id: uid('list'), name, goal: 10, contacts };
   state.lists.push(list);
   activeListId = list.id;
   await saveData();
   renderListSelect();
   renderAll();
+  document.getElementById('newListBackdrop').classList.remove('show');
   showToast('List created: ' + list.name);
 });
 
@@ -779,7 +926,7 @@ function renderTable(list) {
   });
 }
 
-function openModal(id) {
+async function openModal(id) {
   const list = activeList();
   const modal = document.getElementById('modalBackdrop');
   const isEdit = !!id;
@@ -802,8 +949,52 @@ function openModal(id) {
   } else {
     logDiv.innerHTML = '';
   }
+  const donationsSection = document.getElementById('donationsSection');
+  document.getElementById('donationAmount').value = '';
+  document.getElementById('donationDate').value = todayStr();
+  document.getElementById('donationNote').value = '';
+  if (isEdit && c && c.personId) {
+    donationsSection.style.display = '';
+    await renderDonations(c.personId);
+  } else {
+    donationsSection.style.display = 'none';
+  }
   modal.classList.add('show');
 }
+
+async function renderDonations(personId) {
+  const listEl = document.getElementById('donationsList');
+  listEl.innerHTML = '<div class="empty">Loading…</div>';
+  const donations = await loadDonations(personId);
+  if (!donations.length) {
+    listEl.innerHTML = '<div class="empty">No donations logged yet.</div>';
+    return;
+  }
+  listEl.innerHTML = donations.map(d => {
+    const amt = d.amount != null ? '$' + Number(d.amount).toLocaleString() : '—';
+    const date = d.donated_on || '';
+    return `<div class="donation-entry"><span>${escapeHtml(date)}${d.note ? ' — ' + escapeHtml(d.note) : ''}</span><span class="amt">${amt}</span></div>`;
+  }).join('');
+}
+
+document.getElementById('addDonationBtn').addEventListener('click', async () => {
+  const list = activeList();
+  const id = document.getElementById('editId').value;
+  const c = list.contacts.find(x => x.id === id);
+  if (!c || !c.personId) return;
+  const amountRaw = document.getElementById('donationAmount').value;
+  const amount = amountRaw !== '' ? Number(amountRaw) : null;
+  const donated_on = document.getElementById('donationDate').value || null;
+  const note = document.getElementById('donationNote').value.trim();
+  if (amount == null && !note) { showToast('Enter an amount or a note'); return; }
+  const { error } = await window.supabase.from('donations')
+    .insert({ person_id: c.personId, amount, donated_on, note: note || null });
+  if (error) { console.error(error); showToast('Could not save donation'); return; }
+  document.getElementById('donationAmount').value = '';
+  document.getElementById('donationNote').value = '';
+  await renderDonations(c.personId);
+  showToast('Donation logged');
+});
 
 function closeModal() {
   document.getElementById('modalBackdrop').classList.remove('show');
@@ -829,11 +1020,12 @@ document.getElementById('saveContactBtn').addEventListener('click', async () => 
     notes: document.getElementById('fNotes').value.trim(),
     category: document.getElementById('fCategory').value,
   };
+  const personId = await findOrCreatePerson(data);
   if (id) {
     const c = list.contacts.find(x => x.id === id);
-    Object.assign(c, data);
+    Object.assign(c, data, { personId: personId || c.personId });
   } else {
-    list.contacts.push({ id: uid('c'), ...data, priority: Date.now(), callLog: [] });
+    list.contacts.push({ id: uid('c'), ...data, personId, priority: Date.now(), callLog: [] });
   }
   await saveData();
   closeModal();
@@ -952,15 +1144,19 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
     const r = rows[i];
     const name = (r[idx.name] || '').trim();
     if (!name) continue;
+    const phone = idx.phone > -1 ? (r[idx.phone]||'').trim() : '';
+    const email = idx.email > -1 ? (r[idx.email]||'').trim() : '';
+    const personId = await findOrCreatePerson({ name, phone, email });
     list.contacts.push({
       id: uid('c'),
       name,
-      phone: idx.phone > -1 ? (r[idx.phone]||'').trim() : '',
-      email: idx.email > -1 ? (r[idx.email]||'').trim() : '',
+      phone,
+      email,
       ask: idx.ask > -1 ? (r[idx.ask]||'').trim() : '',
       lastGift: idx.lastGift > -1 ? (r[idx.lastGift]||'').trim() : '',
       notes: idx.notes > -1 ? (r[idx.notes]||'').trim() : '',
       category: idx.category > -1 ? normalizeCategory(r[idx.category]) : 'not-complete',
+      personId,
       priority: Date.now(),
       callLog: []
     });
