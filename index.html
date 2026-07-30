@@ -327,6 +327,7 @@
       <div class="list-select-wrap" id="listSelectWrap">
         <select id="listSelect"></select>
         <button class="ghost" id="renameListBtn" title="Rename this list">Rename</button>
+        <button class="ghost" id="deleteListBtn" title="Delete this list">Delete list</button>
         <button class="ghost" id="newListBtn" title="Add a new candidate list">+ New list</button>
       </div>
     </div>
@@ -852,6 +853,25 @@ document.getElementById('renameListBtn').addEventListener('click', async () => {
   await saveData();
   renderListSelect();
   showToast('Renamed to ' + list.name);
+});
+
+document.getElementById('deleteListBtn').addEventListener('click', async () => {
+  const list = activeList();
+  if (!list) return;
+  const count = list.contacts.length;
+  const warning = count
+    ? `Delete "${list.name}" and its ${count} contact${count === 1 ? '' : 's'}? This can't be undone.`
+    : `Delete "${list.name}"? This can't be undone.`;
+  if (!confirm(warning)) return;
+  state.lists = state.lists.filter(l => l.id !== list.id);
+  if (!state.lists.length) {
+    state.lists = [{ id: uid('list'), name: 'New Candidate', goal: 10, contacts: [] }];
+  }
+  activeListId = state.lists[0].id;
+  await saveData();
+  renderListSelect();
+  renderAll();
+  showToast('List deleted');
 });
 
 document.getElementById('newListBtn').addEventListener('click', async () => {
