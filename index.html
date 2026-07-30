@@ -244,15 +244,30 @@
   .donations-section { margin-top: 16px; border-top: 1px dashed var(--hairline); padding-top: 10px; }
   .donations-section h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--slate); margin: 0 0 8px; }
   .donations-list { font-size: 12.5px; max-height: 130px; overflow-y: auto; margin-bottom: 10px; }
-  .donations-list .donation-entry { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+  .donations-list .donation-entry { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
   .donations-list .donation-entry .amt { color: var(--pledge); font-weight: 600; font-family: 'IBM Plex Mono', monospace; }
+  .donations-list .donation-entry.is-pledged .amt { color: var(--brass-dark); }
   .donations-list .empty { color: var(--slate); font-style: italic; }
-  .donation-form { display: flex; gap: 6px; align-items: flex-end; }
+  .pledge-badge {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    background: var(--amber-bg); color: var(--brass-dark); border: 1px solid var(--brass);
+    padding: 1px 6px; border-radius: 8px; white-space: nowrap;
+  }
+  .mark-fulfilled-btn {
+    font-size: 10.5px; border: 1px solid var(--pledge); color: var(--pledge); background: var(--pledge-bg);
+    border-radius: 8px; padding: 1px 7px; cursor: pointer; white-space: nowrap;
+  }
+  .mark-fulfilled-btn:hover { background: var(--pledge); color: #fff; }
+  .donation-totals { display: flex; gap: 14px; font-size: 11.5px; color: var(--slate); margin: -4px 0 8px; }
+  .donation-totals b { color: var(--ink); font-family: 'IBM Plex Mono', monospace; }
+  .donation-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: flex-end; }
   .donation-form .field { margin-bottom: 0; }
   .donation-form input[type="text"], .donation-form input[type="number"], .donation-form input[type="date"] { font-size: 12.5px; padding: 6px 8px; }
   .donation-form .amt-field { width: 90px; }
   .donation-form .date-field { width: 130px; }
-  .donation-form .note-field { flex: 1; }
+  .donation-form .note-field { flex: 1; min-width: 100px; }
+  .donation-form .pledge-field { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--slate); white-space: nowrap; margin-bottom: 8px; }
+  .donation-form .pledge-field input { margin: 0; }
 
   .directory-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: 5px; padding: 6px 10px; margin-top: 8px; }
   .directory-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--hairline); font-size: 13px; }
@@ -512,6 +527,7 @@
     <div class="call-log-list" id="editCallLog"></div>
     <div class="donations-section" id="donationsSection" style="display:none;">
       <h4>Donation history</h4>
+      <div class="donation-totals" id="donationTotals"></div>
       <div class="donations-list" id="donationsList"></div>
       <div class="donation-form">
         <div class="field amt-field">
@@ -526,6 +542,7 @@
           <label>Note</label>
           <input type="text" id="donationNote" placeholder="e.g. 2025 fall gala">
         </div>
+        <label class="pledge-field"><input type="checkbox" id="donationIsPledge"> Pledge (not received yet)</label>
         <button class="ghost" id="addDonationBtn">Add</button>
       </div>
     </div>
@@ -604,6 +621,7 @@
     </div>
     <div class="donations-section" style="margin-top:16px;">
       <h4>Donation history</h4>
+      <div class="donation-totals" id="personDonationTotals"></div>
       <div class="donations-list" id="personDonationsList"></div>
       <div class="donation-form">
         <div class="field amt-field">
@@ -618,6 +636,7 @@
           <label>Note</label>
           <input type="text" id="personDonationNote" placeholder="e.g. 2025 fall gala">
         </div>
+        <label class="pledge-field"><input type="checkbox" id="personDonationIsPledge"> Pledge (not received yet)</label>
         <button class="ghost" id="addPersonDonationBtn">Add</button>
       </div>
     </div>
@@ -880,6 +899,38 @@ async function loadDonations(personId) {
     .select('*').eq('person_id', personId).order('donated_on', { ascending: false, nullsFirst: false });
   if (error) { console.error(error); return []; }
   return data || [];
+}
+
+function donationTotals(donations) {
+  let pledged = 0, fulfilled = 0;
+  donations.forEach(d => {
+    const amt = Number(d.amount) || 0;
+    if (d.status === 'pledged') pledged += amt; else fulfilled += amt;
+  });
+  return { pledged, fulfilled };
+}
+
+function donationEntryHtml(d) {
+  const amt = d.amount != null ? '$' + Number(d.amount).toLocaleString() : '—';
+  const date = d.donated_on || '';
+  const isPledged = d.status === 'pledged';
+  return `
+    <div class="donation-entry${isPledged ? ' is-pledged' : ''}">
+      <span>${escapeHtml(date)}${d.note ? ' — ' + escapeHtml(d.note) : ''}${isPledged ? ' <span class="pledge-badge">Pledged</span>' : ''}</span>
+      <span style="display:flex; align-items:center; gap:6px;">
+        <span class="amt">${amt}</span>
+        ${isPledged ? `<button class="mark-fulfilled-btn" data-id="${d.id}">Mark received</button>` : ''}
+      </span>
+    </div>
+  `;
+}
+
+async function markDonationFulfilled(id) {
+  const { error } = await window.supabase.from('donations')
+    .update({ status: 'fulfilled', fulfilled_on: todayStr() })
+    .eq('id', id);
+  if (error) { console.error(error); showToast('Could not update pledge'); return false; }
+  return true;
 }
 
 function setupRealtime() {
@@ -1303,6 +1354,7 @@ async function openModal(id) {
   document.getElementById('donationAmount').value = '';
   document.getElementById('donationDate').value = todayStr();
   document.getElementById('donationNote').value = '';
+  document.getElementById('donationIsPledge').checked = false;
   if (isEdit && c && c.personId) {
     donationsSection.style.display = '';
     await renderDonations(c.personId);
@@ -1314,17 +1366,23 @@ async function openModal(id) {
 
 async function renderDonations(personId) {
   const listEl = document.getElementById('donationsList');
+  const totalsEl = document.getElementById('donationTotals');
   listEl.innerHTML = '<div class="empty">Loading…</div>';
+  totalsEl.innerHTML = '';
   const donations = await loadDonations(personId);
   if (!donations.length) {
     listEl.innerHTML = '<div class="empty">No donations logged yet.</div>';
     return;
   }
-  listEl.innerHTML = donations.map(d => {
-    const amt = d.amount != null ? '$' + Number(d.amount).toLocaleString() : '—';
-    const date = d.donated_on || '';
-    return `<div class="donation-entry"><span>${escapeHtml(date)}${d.note ? ' — ' + escapeHtml(d.note) : ''}</span><span class="amt">${amt}</span></div>`;
-  }).join('');
+  const { pledged, fulfilled } = donationTotals(donations);
+  totalsEl.innerHTML = `<span>Pledged: <b>$${pledged.toLocaleString()}</b></span><span>Received: <b>$${fulfilled.toLocaleString()}</b></span>`;
+  listEl.innerHTML = donations.map(donationEntryHtml).join('');
+  listEl.querySelectorAll('.mark-fulfilled-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await markDonationFulfilled(btn.dataset.id);
+      if (ok) { showToast('Marked as received'); await renderDonations(personId); }
+    });
+  });
 }
 
 document.getElementById('addDonationBtn').addEventListener('click', async () => {
@@ -1336,14 +1394,16 @@ document.getElementById('addDonationBtn').addEventListener('click', async () => 
   const amount = amountRaw !== '' ? Number(amountRaw) : null;
   const donated_on = document.getElementById('donationDate').value || null;
   const note = document.getElementById('donationNote').value.trim();
+  const isPledge = document.getElementById('donationIsPledge').checked;
   if (amount == null && !note) { showToast('Enter an amount or a note'); return; }
   const { error } = await window.supabase.from('donations')
-    .insert({ person_id: c.personId, amount, donated_on, note: note || null });
+    .insert({ person_id: c.personId, amount, donated_on, note: note || null, status: isPledge ? 'pledged' : 'fulfilled' });
   if (error) { console.error(error); showToast('Could not save donation'); return; }
+  document.getElementById('donationIsPledge').checked = false;
   document.getElementById('donationAmount').value = '';
   document.getElementById('donationNote').value = '';
   await renderDonations(c.personId);
-  showToast('Donation logged');
+  showToast(isPledge ? 'Pledge logged' : 'Donation logged');
 });
 
 function closeModal() {
@@ -1697,23 +1757,30 @@ async function openPersonModal(personId) {
   document.getElementById('personDonationAmount').value = '';
   document.getElementById('personDonationDate').value = todayStr();
   document.getElementById('personDonationNote').value = '';
+  document.getElementById('personDonationIsPledge').checked = false;
   await renderPersonDonations(personId);
   document.getElementById('personModalBackdrop').classList.add('show');
 }
 
 async function renderPersonDonations(personId) {
   const listEl = document.getElementById('personDonationsList');
+  const totalsEl = document.getElementById('personDonationTotals');
   listEl.innerHTML = '<div class="empty">Loading…</div>';
+  totalsEl.innerHTML = '';
   const donations = await loadDonations(personId);
   if (!donations.length) {
     listEl.innerHTML = '<div class="empty">No donations logged yet.</div>';
     return;
   }
-  listEl.innerHTML = donations.map(d => {
-    const amt = d.amount != null ? '$' + Number(d.amount).toLocaleString() : '—';
-    const date = d.donated_on || '';
-    return `<div class="donation-entry"><span>${escapeHtml(date)}${d.note ? ' — ' + escapeHtml(d.note) : ''}</span><span class="amt">${amt}</span></div>`;
-  }).join('');
+  const { pledged, fulfilled } = donationTotals(donations);
+  totalsEl.innerHTML = `<span>Pledged: <b>$${pledged.toLocaleString()}</b></span><span>Received: <b>$${fulfilled.toLocaleString()}</b></span>`;
+  listEl.innerHTML = donations.map(donationEntryHtml).join('');
+  listEl.querySelectorAll('.mark-fulfilled-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await markDonationFulfilled(btn.dataset.id);
+      if (ok) { showToast('Marked as received'); await renderPersonDonations(personId); }
+    });
+  });
 }
 
 document.getElementById('addPersonDonationBtn').addEventListener('click', async () => {
@@ -1723,14 +1790,16 @@ document.getElementById('addPersonDonationBtn').addEventListener('click', async 
   const amount = amountRaw !== '' ? Number(amountRaw) : null;
   const donated_on = document.getElementById('personDonationDate').value || null;
   const note = document.getElementById('personDonationNote').value.trim();
+  const isPledge = document.getElementById('personDonationIsPledge').checked;
   if (amount == null && !note) { showToast('Enter an amount or a note'); return; }
   const { error } = await window.supabase.from('donations')
-    .insert({ person_id: personId, amount, donated_on, note: note || null });
+    .insert({ person_id: personId, amount, donated_on, note: note || null, status: isPledge ? 'pledged' : 'fulfilled' });
   if (error) { console.error(error); showToast('Could not save donation'); return; }
+  document.getElementById('personDonationIsPledge').checked = false;
   document.getElementById('personDonationAmount').value = '';
   document.getElementById('personDonationNote').value = '';
   await renderPersonDonations(personId);
-  showToast('Donation logged');
+  showToast(isPledge ? 'Pledge logged' : 'Donation logged');
 });
 
 function closePersonModal() {

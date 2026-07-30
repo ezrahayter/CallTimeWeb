@@ -124,6 +124,13 @@ create table if not exists donations (
 
 create index if not exists donations_person_idx on donations (person_id);
 
+-- Pledges are logged as donation rows too — 'pledged' means promised but not
+-- yet received; flipping to 'fulfilled' (and stamping fulfilled_on) is how
+-- you mark that the money actually came in. Existing rows default to
+-- 'fulfilled' since they already represented gifts actually received.
+alter table donations add column if not exists status text not null default 'fulfilled';
+alter table donations add column if not exists fulfilled_on date;
+
 alter table donations enable row level security;
 
 drop policy if exists "Authenticated users can read donations" on donations;
