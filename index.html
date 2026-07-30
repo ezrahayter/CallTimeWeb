@@ -269,12 +269,20 @@
   .donation-form .pledge-field { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--slate); white-space: nowrap; margin-bottom: 8px; }
   .donation-form .pledge-field input { margin: 0; }
 
-  .directory-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: 5px; padding: 6px 10px; margin-top: 8px; }
+  .directory-list { max-height: 320px; overflow-y: auto; border: 1px solid var(--hairline); border-radius: 5px; padding: 6px 10px; margin-top: 8px; }
   .directory-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--hairline); font-size: 13px; }
   .directory-row:last-child { border-bottom: none; }
   .directory-row .who { flex: 1; }
   .directory-row .sub { color: var(--slate); font-size: 11.5px; }
   .directory-empty { color: var(--slate); font-style: italic; font-size: 12.5px; padding: 8px 0; }
+  .modal-xl { max-width: 720px; }
+  .directory-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+  .directory-filters input {
+    flex: 1; min-width: 150px; border: 1px solid var(--hairline); border-radius: 4px;
+    padding: 8px 10px; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
+  }
+  .directory-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--slate); }
+  .directory-toolbar button { padding: 4px 10px; font-size: 11.5px; }
 
   .toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
@@ -555,15 +563,24 @@
 </div>
 
 <div class="modal-backdrop" id="newListBackdrop">
-  <div class="modal">
+  <div class="modal modal-xl">
     <h3>New list</h3>
     <div class="field">
       <label>List name</label>
       <input type="text" id="newListNameInput" placeholder="e.g. Fall Gala Prospects">
     </div>
     <div class="field">
-      <label>Add people from your directory (optional — you can also import a CSV/Excel after creating the list)</label>
-      <input type="text" id="directorySearchInput" placeholder="Search directory...">
+      <label>Pull people from your directory (optional — you can also import a CSV/Excel after creating the list)</label>
+      <div class="directory-filters">
+        <input type="text" id="directorySearchInput" placeholder="Search name, phone, email...">
+        <input type="text" id="directoryAddressInput" placeholder="Filter by address (city, zip, street...)">
+        <input type="number" id="directoryMinGivingInput" placeholder="Min lifetime given ($)" min="0">
+      </div>
+      <div class="directory-toolbar">
+        <span id="directorySelectedCount">0 selected</span>
+        <button class="ghost" id="selectAllFilteredBtn" type="button">Select all shown</button>
+        <button class="ghost" id="clearSelectionBtn" type="button">Clear selection</button>
+      </div>
       <div class="directory-list" id="directoryListEl"></div>
     </div>
     <div class="modal-actions">
@@ -901,6 +918,20 @@ async function loadDonations(personId) {
   return data || [];
 }
 
+let givingTotals = null;
+async function loadGivingTotals(force) {
+  if (givingTotals && !force) return givingTotals;
+  const { data, error } = await window.supabase.from('donations').select('person_id, amount').eq('status', 'fulfilled');
+  if (error) { console.error(error); return givingTotals || new Map(); }
+  const totals = new Map();
+  (data || []).forEach(d => {
+    const amt = Number(d.amount) || 0;
+    totals.set(d.person_id, (totals.get(d.person_id) || 0) + amt);
+  });
+  givingTotals = totals;
+  return givingTotals;
+}
+
 function donationTotals(donations) {
   let pledged = 0, fulfilled = 0;
   donations.forEach(d => {
@@ -1043,9 +1074,12 @@ document.getElementById('deleteListBtn').addEventListener('click', async () => {
 document.getElementById('newListBtn').addEventListener('click', async () => {
   document.getElementById('newListNameInput').value = '';
   document.getElementById('directorySearchInput').value = '';
+  document.getElementById('directoryAddressInput').value = '';
+  document.getElementById('directoryMinGivingInput').value = '';
   selectedDirectoryIds = new Set();
   await loadPeople();
-  renderDirectoryList('');
+  await loadGivingTotals();
+  renderDirectoryList();
   document.getElementById('newListBackdrop').classList.add('show');
 });
 
@@ -1056,32 +1090,59 @@ document.getElementById('newListBackdrop').addEventListener('click', (e) => {
   if (e.target.id === 'newListBackdrop') document.getElementById('newListBackdrop').classList.remove('show');
 });
 
-function renderDirectoryList(query) {
+function filteredDirectoryPeople() {
+  const q = document.getElementById('directorySearchInput').value.toLowerCase().trim();
+  const addrQ = document.getElementById('directoryAddressInput').value.toLowerCase().trim();
+  const minGivingRaw = document.getElementById('directoryMinGivingInput').value;
+  const minGiving = minGivingRaw !== '' ? Number(minGivingRaw) : null;
+  const totals = givingTotals || new Map();
+  return (peopleCache || []).filter(p => {
+    if (q && !(p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q))) return false;
+    if (addrQ && !(p.address || '').toLowerCase().includes(addrQ)) return false;
+    if (minGiving != null && (totals.get(p.id) || 0) < minGiving) return false;
+    return true;
+  }).sort((a,b) => a.name.localeCompare(b.name));
+}
+
+function renderDirectoryList() {
   const el = document.getElementById('directoryListEl');
-  const q = (query || '').toLowerCase().trim();
-  const people = (peopleCache || []).filter(p =>
-    !q || p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q)
-  );
+  const people = filteredDirectoryPeople();
+  const totals = givingTotals || new Map();
+  document.getElementById('directorySelectedCount').textContent = `${selectedDirectoryIds.size} selected`;
   if (!people.length) {
-    el.innerHTML = '<div class="directory-empty">No one in your directory yet — import a CSV/Excel or add contacts to build it up.</div>';
+    el.innerHTML = `<div class="directory-empty">${(peopleCache||[]).length ? 'No one in your directory matches these filters.' : 'No one in your directory yet — import a CSV/Excel or add contacts to build it up.'}</div>`;
     return;
   }
-  el.innerHTML = people.map(p => `
-    <label class="directory-row">
-      <input type="checkbox" data-person-id="${p.id}" ${selectedDirectoryIds.has(p.id) ? 'checked' : ''}>
-      <span class="who">${escapeHtml(p.name)}<div class="sub">${escapeHtml(p.phone || p.email || '')}</div></span>
-    </label>
-  `).join('');
+  el.innerHTML = people.map(p => {
+    const given = totals.get(p.id) || 0;
+    const subParts = [p.phone || p.email || '', p.address || '', given ? ('$' + given.toLocaleString() + ' lifetime') : ''].filter(Boolean);
+    return `
+      <label class="directory-row">
+        <input type="checkbox" data-person-id="${p.id}" ${selectedDirectoryIds.has(p.id) ? 'checked' : ''}>
+        <span class="who">${escapeHtml(p.name)}<div class="sub">${escapeHtml(subParts.join(' · '))}</div></span>
+      </label>
+    `;
+  }).join('');
   el.querySelectorAll('input[type="checkbox"]').forEach(cb => {
     cb.addEventListener('change', () => {
       const pid = cb.dataset.personId;
       if (cb.checked) selectedDirectoryIds.add(pid); else selectedDirectoryIds.delete(pid);
+      document.getElementById('directorySelectedCount').textContent = `${selectedDirectoryIds.size} selected`;
     });
   });
 }
 
-document.getElementById('directorySearchInput').addEventListener('input', (e) => {
-  renderDirectoryList(e.target.value);
+['directorySearchInput', 'directoryAddressInput', 'directoryMinGivingInput'].forEach(id => {
+  document.getElementById(id).addEventListener('input', () => renderDirectoryList());
+});
+
+document.getElementById('selectAllFilteredBtn').addEventListener('click', () => {
+  filteredDirectoryPeople().forEach(p => selectedDirectoryIds.add(p.id));
+  renderDirectoryList();
+});
+document.getElementById('clearSelectionBtn').addEventListener('click', () => {
+  selectedDirectoryIds.clear();
+  renderDirectoryList();
 });
 
 document.getElementById('createNewListBtn').addEventListener('click', async () => {
@@ -1091,6 +1152,7 @@ document.getElementById('createNewListBtn').addEventListener('click', async () =
     .filter(p => selectedDirectoryIds.has(p.id))
     .map(p => ({
       id: uid('c'), name: p.name, phone: p.phone || '', email: p.email || '',
+      address: p.address || '', organization: p.organization || '', occupation: p.occupation || '',
       ask: '', lastGift: '', notes: '', category: 'not-complete',
       personId: p.id, priority: Date.now(), callLog: []
     }));
