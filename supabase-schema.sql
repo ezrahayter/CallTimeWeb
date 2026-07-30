@@ -161,5 +161,60 @@ begin
   end if;
 end $$;
 
+-- ---------------------------------------------------------------------------
+-- Possible-duplicate flags — pairs of people the team has flagged as maybe
+-- being the same person (e.g. same name, added on different lists) but
+-- hasn't merged yet. 'dismissed' means someone already confirmed they're
+-- different people, so we stop asking about that pair.
+-- ---------------------------------------------------------------------------
+create table if not exists possible_duplicates (
+  id uuid primary key default gen_random_uuid(),
+  person_a uuid not null references people(id) on delete cascade,
+  person_b uuid not null references people(id) on delete cascade,
+  status text not null default 'pending',
+  created_at timestamptz not null default now(),
+  unique (person_a, person_b)
+);
+
+create index if not exists possible_duplicates_person_a_idx on possible_duplicates (person_a);
+create index if not exists possible_duplicates_person_b_idx on possible_duplicates (person_b);
+
+alter table possible_duplicates enable row level security;
+
+drop policy if exists "Authenticated users can read possible_duplicates" on possible_duplicates;
+create policy "Authenticated users can read possible_duplicates"
+  on possible_duplicates for select
+  to authenticated
+  using (true);
+
+drop policy if exists "Authenticated users can insert possible_duplicates" on possible_duplicates;
+create policy "Authenticated users can insert possible_duplicates"
+  on possible_duplicates for insert
+  to authenticated
+  with check (true);
+
+drop policy if exists "Authenticated users can update possible_duplicates" on possible_duplicates;
+create policy "Authenticated users can update possible_duplicates"
+  on possible_duplicates for update
+  to authenticated
+  using (true)
+  with check (true);
+
+drop policy if exists "Authenticated users can delete possible_duplicates" on possible_duplicates;
+create policy "Authenticated users can delete possible_duplicates"
+  on possible_duplicates for delete
+  to authenticated
+  using (true);
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'possible_duplicates'
+  ) then
+    alter publication supabase_realtime add table possible_duplicates;
+  end if;
+end $$;
+
 -- Make sure the API layer picks up the tables/policies immediately.
 notify pgrst, 'reload schema';

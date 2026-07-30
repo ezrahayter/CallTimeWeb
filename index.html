@@ -80,6 +80,14 @@
   }
   .merge-chip:hover { background: var(--amber-bg); border-color: var(--brass); }
   .merge-summary { font-size: 12.5px; color: var(--slate); margin-top: 10px; border-top: 1px dashed var(--hairline); padding-top: 10px; }
+  .dup-badge {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600;
+    background: var(--amber-bg); color: var(--brass-dark); border: 1px solid var(--brass);
+    padding: 2px 8px; border-radius: 10px; white-space: nowrap; cursor: pointer; margin-left: 6px;
+  }
+  .dup-badge:hover { background: var(--brass); color: #fff; }
+  .dup-dismiss { border: none; background: none; padding: 0; color: inherit; font-size: 11px; line-height: 1; cursor: pointer; }
+  .dup-dismiss:hover { text-decoration: underline; }
   .list-select-wrap { display: flex; align-items: center; gap: 8px; }
   .list-select-wrap select {
     font-family: 'Lora', serif; font-weight: 600; font-size: 15px;
@@ -423,6 +431,7 @@
     </div>
     <div class="controls-row merge-bar" style="margin-bottom:12px;">
       <input type="text" id="masterSearchInput" placeholder="Search name, phone, email, org, address...">
+      <button class="ghost" id="scanDuplicatesBtn" title="Scan the directory for people who share a name">Scan for duplicates</button>
       <button class="ghost hidden" id="mergeSelectedBtn">Merge selected (0)</button>
     </div>
     <div class="panel" style="padding:0; overflow-x:auto;">
@@ -632,6 +641,18 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="dupModalBackdrop">
+  <div class="modal">
+    <h3>Possible duplicate</h3>
+    <p id="dupModalText" style="font-size:13px; color:var(--ink); line-height:1.5;"></p>
+    <div class="modal-actions">
+      <button class="ghost" id="dupNotSameBtn">Not the same person</button>
+      <button class="ghost" id="dupSkipBtn">Ask me later</button>
+      <button class="primary" id="dupSameBtn">Flag as possible duplicate</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
@@ -646,6 +667,7 @@ let statusFilter = '';
 let realtimeChannel = null;
 let peopleCache = null;
 let selectedDirectoryIds = new Set();
+let duplicateFlags = null;
 
 function uid(prefix) { return prefix + '_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
 
@@ -689,6 +711,7 @@ async function loadData() {
   renderAll();
   setupRealtime();
   loadPeople();
+  loadDuplicateFlags();
 }
 
 async function saveData() {
@@ -716,6 +739,98 @@ async function loadPeople(force) {
   if (error) { console.error(error); return peopleCache || []; }
   peopleCache = data || [];
   return peopleCache;
+}
+
+// ---- Possible-duplicate flags (same-name people awaiting review) ----
+async function loadDuplicateFlags(force) {
+  if (duplicateFlags && !force) return duplicateFlags;
+  const { data, error } = await window.supabase.from('possible_duplicates').select('*');
+  if (error) { console.error(error); return duplicateFlags || []; }
+  duplicateFlags = data || [];
+  return duplicateFlags;
+}
+
+function orderedPair(a, b) { return a < b ? [a, b] : [b, a]; }
+
+function flagStatusFor(a, b) {
+  if (!a || !b) return null;
+  const [x, y] = orderedPair(a, b);
+  const row = (duplicateFlags || []).find(f => f.person_a === x && f.person_b === y);
+  return row ? row.status : null;
+}
+
+async function setDuplicateFlag(a, b, status) {
+  const [x, y] = orderedPair(a, b);
+  const existing = (duplicateFlags || []).find(f => f.person_a === x && f.person_b === y);
+  if (existing) {
+    const { error } = await window.supabase.from('possible_duplicates').update({ status }).eq('id', existing.id);
+    if (error) { console.error(error); return; }
+    existing.status = status;
+  } else {
+    const { data, error } = await window.supabase.from('possible_duplicates')
+      .insert({ person_a: x, person_b: y, status }).select().single();
+    if (error) { console.error(error); return; }
+    (duplicateFlags || (duplicateFlags = [])).push(data);
+  }
+}
+
+function pendingPartner(personId) {
+  const row = (duplicateFlags || []).find(f => f.status === 'pending' && (f.person_a === personId || f.person_b === personId));
+  if (!row) return null;
+  return row.person_a === personId ? row.person_b : row.person_a;
+}
+
+function findNameMatches(name, excludePersonId) {
+  const n = (name || '').trim().toLowerCase();
+  if (!n) return [];
+  return (peopleCache || []).filter(p =>
+    p.id !== excludePersonId &&
+    (p.name || '').trim().toLowerCase() === n &&
+    !flagStatusFor(p.id, excludePersonId)
+  );
+}
+
+function personDetail(p) {
+  return [p.organization, p.phone, p.email].filter(Boolean).join(' · ') || 'no other details on file';
+}
+
+function askDuplicate(personA, personB) {
+  return new Promise(resolve => {
+    document.getElementById('dupModalText').textContent =
+      `"${personA.name}" appears more than once in your Master List:\n\n` +
+      `• ${personDetail(personA)}\n` +
+      `• ${personDetail(personB)}\n\n` +
+      `Are these the same person?`;
+    document.getElementById('dupModalText').style.whiteSpace = 'pre-line';
+    const modal = document.getElementById('dupModalBackdrop');
+    modal.classList.add('show');
+    const sameBtn = document.getElementById('dupSameBtn');
+    const notBtn = document.getElementById('dupNotSameBtn');
+    const skipBtn = document.getElementById('dupSkipBtn');
+    function cleanup(result) {
+      modal.classList.remove('show');
+      sameBtn.removeEventListener('click', onSame);
+      notBtn.removeEventListener('click', onNot);
+      skipBtn.removeEventListener('click', onSkip);
+      resolve(result);
+    }
+    function onSame() { cleanup('same'); }
+    function onNot() { cleanup('not-same'); }
+    function onSkip() { cleanup('skip'); }
+    sameBtn.addEventListener('click', onSame);
+    notBtn.addEventListener('click', onNot);
+    skipBtn.addEventListener('click', onSkip);
+  });
+}
+
+async function runDuplicateCheck(personId, candidates) {
+  const self = (peopleCache || []).find(p => p.id === personId);
+  if (!self) return;
+  for (const candidate of candidates) {
+    const result = await askDuplicate(self, candidate);
+    if (result === 'same') await setDuplicateFlag(personId, candidate.id, 'pending');
+    else if (result === 'not-same') await setDuplicateFlag(personId, candidate.id, 'dismissed');
+  }
 }
 
 async function recordListMembership(personId, listId) {
@@ -1259,6 +1374,10 @@ document.getElementById('saveContactBtn').addEventListener('click', async () => 
     category: document.getElementById('fCategory').value,
   };
   const personId = await findOrCreatePerson(data);
+  if (personId) {
+    const nameMatches = findNameMatches(data.name, personId);
+    if (nameMatches.length) await runDuplicateCheck(personId, nameMatches);
+  }
   if (id) {
     const c = list.contacts.find(x => x.id === id);
     Object.assign(c, data, { personId: personId || c.personId });
@@ -1449,6 +1568,7 @@ async function renderMasterList() {
   const tbody = document.getElementById('masterListBody');
   tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:var(--slate); padding:24px;">Loading…</td></tr>`;
   await loadPeople(true);
+  await loadDuplicateFlags(true);
   const validIds = new Set((peopleCache || []).map(p => p.id));
   mergeSelectedIds.forEach(id => { if (!validIds.has(id)) mergeSelectedIds.delete(id); });
   updateMergeButton();
@@ -1473,10 +1593,14 @@ async function renderMasterList() {
       : '<span style="color:var(--slate); font-style:italic;">Not on any list</span>';
     const orgLine = [p.occupation, p.organization].filter(Boolean).join(' at ');
     const contactLine = [p.phone, p.email].filter(Boolean).join(' · ');
+    const partnerId = pendingPartner(p.id);
+    const dupBadge = partnerId
+      ? `<span class="dup-badge" data-person-id="${p.id}" data-partner-id="${partnerId}" title="Select both for merge">⚠ possible duplicate <button class="dup-dismiss" data-person-id="${p.id}" data-partner-id="${partnerId}" title="Not the same person">✕</button></span>`
+      : '';
     return `
       <tr class="contact-row" data-person-id="${p.id}">
         <td><input type="checkbox" class="merge-checkbox" data-person-id="${p.id}" ${mergeSelectedIds.has(p.id) ? 'checked' : ''}></td>
-        <td><div class="name-cell">${escapeHtml(p.name)}</div></td>
+        <td><div class="name-cell">${escapeHtml(p.name)}${dupBadge}</div></td>
         <td class="sub-cell">${orgLine ? escapeHtml(orgLine) : '—'}</td>
         <td class="sub-cell">${contactLine ? escapeHtml(contactLine) : '—'}</td>
         <td class="sub-cell">${p.address ? escapeHtml(p.address) : '—'}</td>
@@ -1486,8 +1610,26 @@ async function renderMasterList() {
   }).join('');
   tbody.querySelectorAll('.contact-row').forEach(tr => {
     tr.addEventListener('click', (e) => {
-      if (e.target.classList.contains('merge-checkbox')) return;
+      if (e.target.closest('.merge-checkbox, .dup-badge')) return;
       openPersonModal(tr.dataset.personId);
+    });
+  });
+  tbody.querySelectorAll('.dup-dismiss').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await setDuplicateFlag(btn.dataset.personId, btn.dataset.partnerId, 'dismissed');
+      showToast('Not flagged as a duplicate anymore');
+      renderMasterList();
+    });
+  });
+  tbody.querySelectorAll('.dup-badge').forEach(badge => {
+    badge.addEventListener('click', (e) => {
+      if (e.target.closest('.dup-dismiss')) return;
+      mergeSelectedIds.add(badge.dataset.personId);
+      mergeSelectedIds.add(badge.dataset.partnerId);
+      updateMergeButton();
+      renderMasterList();
+      showToast('Selected both for merge — click "Merge selected" to combine them.');
     });
   });
   tbody.querySelectorAll('.merge-checkbox').forEach(cb => {
@@ -1503,6 +1645,35 @@ async function renderMasterList() {
 document.getElementById('masterSearchInput').addEventListener('input', (e) => {
   masterSearchQuery = e.target.value;
   renderMasterList();
+});
+
+document.getElementById('scanDuplicatesBtn').addEventListener('click', async () => {
+  await loadPeople(true);
+  await loadDuplicateFlags(true);
+  const groups = new Map();
+  (peopleCache || []).forEach(p => {
+    const key = (p.name || '').trim().toLowerCase();
+    if (!key) return;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  });
+  const pairs = [];
+  groups.forEach(group => {
+    if (group.length < 2) return;
+    for (let i = 0; i < group.length; i++) {
+      for (let j = i + 1; j < group.length; j++) {
+        if (!flagStatusFor(group[i].id, group[j].id)) pairs.push([group[i], group[j]]);
+      }
+    }
+  });
+  if (!pairs.length) { showToast('No new possible duplicates found'); return; }
+  for (const [a, b] of pairs) {
+    const result = await askDuplicate(a, b);
+    if (result === 'same') await setDuplicateFlag(a.id, b.id, 'pending');
+    else if (result === 'not-same') await setDuplicateFlag(a.id, b.id, 'dismissed');
+  }
+  renderMasterList();
+  showToast('Duplicate scan complete');
 });
 
 async function openPersonModal(personId) {
