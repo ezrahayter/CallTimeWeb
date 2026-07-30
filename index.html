@@ -454,7 +454,7 @@
     </div>
     <div class="controls-row merge-bar" style="margin-bottom:12px;">
       <input type="text" id="masterSearchInput" placeholder="Search name, phone, email, org, address...">
-      <button class="ghost" id="scanDuplicatesBtn" title="Scan the directory for people who share a name">Scan for duplicates</button>
+      <button class="ghost" id="scanDuplicatesBtn" title="Scan the directory for people who share a name, phone, or address">Scan for duplicates</button>
       <button class="ghost hidden" id="mergeSelectedBtn">Merge selected (0)</button>
     </div>
     <div class="panel" style="padding:0; overflow-x:auto;">
@@ -689,6 +689,17 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="strongMatchModalBackdrop">
+  <div class="modal">
+    <h3>Possible duplicate</h3>
+    <p id="strongMatchText" style="font-size:13px; color:var(--ink); line-height:1.5; white-space:pre-line;"></p>
+    <div class="modal-actions">
+      <button class="ghost" id="strongMatchNotSameBtn">Not the same person</button>
+      <button class="primary" id="strongMatchMergeBtn">Merge</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
@@ -816,18 +827,38 @@ function pendingPartner(personId) {
   return row.person_a === personId ? row.person_b : row.person_a;
 }
 
-function findNameMatches(name, excludePersonId) {
-  const n = (name || '').trim().toLowerCase();
-  if (!n) return [];
-  return (peopleCache || []).filter(p =>
-    p.id !== excludePersonId &&
-    (p.name || '').trim().toLowerCase() === n &&
-    !flagStatusFor(p.id, excludePersonId)
-  );
+function normAddress(a) { return (a || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+
+// Which of name/phone/address match between two people, normalized so
+// formatting differences (case, spacing, phone punctuation) don't matter.
+function matchedFields(a, b) {
+  const matched = [];
+  const an = (a.name || '').trim().toLowerCase(), bn = (b.name || '').trim().toLowerCase();
+  if (an && an === bn) matched.push('name');
+  const ap = normPhone(a.phone), bp = normPhone(b.phone);
+  if (ap && ap === bp) matched.push('phone');
+  const aa = normAddress(a.address), ba = normAddress(b.address);
+  if (aa && aa === ba) matched.push('address');
+  return matched;
+}
+
+// 2+ of name/phone/address matching is a strong signal — offer a one-click
+// merge. A name-only match is weaker (common names) — just flag it for
+// later review instead.
+function findDuplicateCandidates(person) {
+  const strong = [];
+  const weak = [];
+  (peopleCache || []).forEach(p => {
+    if (p.id === person.id || flagStatusFor(p.id, person.id)) return;
+    const matched = matchedFields(person, p);
+    if (matched.length >= 2) strong.push({ person: p, matched });
+    else if (matched.length === 1 && matched[0] === 'name') weak.push(p);
+  });
+  return { strong, weak };
 }
 
 function personDetail(p) {
-  return [p.organization, p.phone, p.email].filter(Boolean).join(' · ') || 'no other details on file';
+  return [p.phone, p.address, p.organization, p.email].filter(Boolean).join(' · ') || 'no other details on file';
 }
 
 function askDuplicate(personA, personB) {
@@ -866,6 +897,51 @@ async function runDuplicateCheck(personId, candidates) {
     const result = await askDuplicate(self, candidate);
     if (result === 'same') await setDuplicateFlag(personId, candidate.id, 'pending');
     else if (result === 'not-same') await setDuplicateFlag(personId, candidate.id, 'dismissed');
+  }
+}
+
+const MATCH_FIELD_LABELS = { name: 'name', phone: 'phone number', address: 'address' };
+
+function askStrongMatch(personA, personB, matched) {
+  return new Promise(resolve => {
+    const fields = matched.map(f => MATCH_FIELD_LABELS[f]).join(' and ');
+    document.getElementById('strongMatchText').textContent =
+      `"${personA.name}" and "${personB.name}" match on ${fields}:\n\n` +
+      `• ${personDetail(personA)}\n` +
+      `• ${personDetail(personB)}\n\n` +
+      `These are very likely the same person. Merge them into one contact?`;
+    const modal = document.getElementById('strongMatchModalBackdrop');
+    modal.classList.add('show');
+    const mergeBtn = document.getElementById('strongMatchMergeBtn');
+    const notBtn = document.getElementById('strongMatchNotSameBtn');
+    function cleanup(result) {
+      modal.classList.remove('show');
+      mergeBtn.removeEventListener('click', onMerge);
+      notBtn.removeEventListener('click', onNot);
+      resolve(result);
+    }
+    function onMerge() { cleanup('merge'); }
+    function onNot() { cleanup('not-same'); }
+    mergeBtn.addEventListener('click', onMerge);
+    notBtn.addEventListener('click', onNot);
+  });
+}
+
+async function runStrongMatchCheck(personId, candidates) {
+  let self = (peopleCache || []).find(p => p.id === personId);
+  if (!self) return;
+  for (const { person: candidate, matched } of candidates) {
+    if (!(peopleCache || []).some(p => p.id === candidate.id)) continue; // already merged away this pass
+    if (flagStatusFor(personId, candidate.id)) continue;
+    const result = await askStrongMatch(self, candidate, matched);
+    if (result === 'merge') {
+      const merged = defaultMergedFields([self, candidate]);
+      await performMerge([personId, candidate.id], merged);
+      self = (peopleCache || []).find(p => p.id === personId) || self;
+      showToast('Contacts merged');
+    } else if (result === 'not-same') {
+      await setDuplicateFlag(personId, candidate.id, 'dismissed');
+    }
   }
 }
 
@@ -1497,8 +1573,12 @@ document.getElementById('saveContactBtn').addEventListener('click', async () => 
   };
   const personId = await findOrCreatePerson(data);
   if (personId) {
-    const nameMatches = findNameMatches(data.name, personId);
-    if (nameMatches.length) await runDuplicateCheck(personId, nameMatches);
+    const self = (peopleCache || []).find(p => p.id === personId);
+    if (self) {
+      const { strong, weak } = findDuplicateCandidates(self);
+      if (strong.length) await runStrongMatchCheck(personId, strong);
+      if (weak.length) await runDuplicateCheck(personId, weak);
+    }
   }
   if (id) {
     const c = list.contacts.find(x => x.id === id);
@@ -1772,24 +1852,57 @@ document.getElementById('masterSearchInput').addEventListener('input', (e) => {
 document.getElementById('scanDuplicatesBtn').addEventListener('click', async () => {
   await loadPeople(true);
   await loadDuplicateFlags(true);
-  const groups = new Map();
-  (peopleCache || []).forEach(p => {
-    const key = (p.name || '').trim().toLowerCase();
-    if (!key) return;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(p);
+  const people = peopleCache || [];
+
+  // Group by each field so we only ever compare people who already share at
+  // least one field, instead of comparing every person to every other person.
+  const nameGroups = new Map(), phoneGroups = new Map(), addressGroups = new Map();
+  people.forEach(p => {
+    const n = (p.name || '').trim().toLowerCase();
+    if (n) { if (!nameGroups.has(n)) nameGroups.set(n, []); nameGroups.get(n).push(p); }
+    const ph = normPhone(p.phone);
+    if (ph) { if (!phoneGroups.has(ph)) phoneGroups.set(ph, []); phoneGroups.get(ph).push(p); }
+    const ad = normAddress(p.address);
+    if (ad) { if (!addressGroups.has(ad)) addressGroups.set(ad, []); addressGroups.get(ad).push(p); }
   });
-  const pairs = [];
-  groups.forEach(group => {
-    if (group.length < 2) return;
-    for (let i = 0; i < group.length; i++) {
-      for (let j = i + 1; j < group.length; j++) {
-        if (!flagStatusFor(group[i].id, group[j].id)) pairs.push([group[i], group[j]]);
+
+  const seenPairs = new Set();
+  const strongPairs = [];
+  const weakPairs = [];
+  [nameGroups, phoneGroups, addressGroups].forEach(groups => {
+    groups.forEach(group => {
+      if (group.length < 2) return;
+      for (let i = 0; i < group.length; i++) {
+        for (let j = i + 1; j < group.length; j++) {
+          const a = group[i], b = group[j];
+          const [x, y] = orderedPair(a.id, b.id);
+          const key = x + '|' + y;
+          if (seenPairs.has(key) || flagStatusFor(a.id, b.id)) continue;
+          seenPairs.add(key);
+          const matched = matchedFields(a, b);
+          if (matched.length >= 2) strongPairs.push({ a, b, matched });
+          else if (matched.length === 1 && matched[0] === 'name') weakPairs.push([a, b]);
+        }
       }
-    }
+    });
   });
-  if (!pairs.length) { showToast('No new possible duplicates found'); return; }
-  for (const [a, b] of pairs) {
+
+  if (!strongPairs.length && !weakPairs.length) { showToast('No new possible duplicates found'); return; }
+
+  for (const { a, b, matched } of strongPairs) {
+    if (!(peopleCache || []).some(p => p.id === a.id) || !(peopleCache || []).some(p => p.id === b.id)) continue;
+    if (flagStatusFor(a.id, b.id)) continue;
+    const result = await askStrongMatch(a, b, matched);
+    if (result === 'merge') {
+      const merged = defaultMergedFields([a, b]);
+      await performMerge([a.id, b.id], merged);
+      showToast('Contacts merged');
+    } else if (result === 'not-same') {
+      await setDuplicateFlag(a.id, b.id, 'dismissed');
+    }
+  }
+  for (const [a, b] of weakPairs) {
+    if (flagStatusFor(a.id, b.id)) continue;
     const result = await askDuplicate(a, b);
     if (result === 'same') await setDuplicateFlag(a.id, b.id, 'pending');
     else if (result === 'not-same') await setDuplicateFlag(a.id, b.id, 'dismissed');
@@ -1911,6 +2024,53 @@ const MERGE_FIELDS = [
 ];
 let mergeCandidateIds = [];
 
+function defaultMergedFields(people) {
+  const merged = {};
+  MERGE_FIELDS.forEach(f => {
+    const values = people.map(p => (p[f.key] || '').trim()).filter(Boolean);
+    merged[f.key] = values[0] || '';
+  });
+  return merged;
+}
+
+async function performMerge(ids, merged) {
+  const primaryId = ids[0];
+  const otherIds = ids.slice(1);
+  const people = ids.map(id => (peopleCache || []).find(p => p.id === id)).filter(Boolean);
+  const mergedHistorySet = new Set();
+  people.forEach(p => (p.list_history || []).forEach(lid => mergedHistorySet.add(lid)));
+  state.lists.forEach(l => { if (l.contacts.some(c => ids.includes(c.personId))) mergedHistorySet.add(l.id); });
+
+  const { error: updateErr } = await window.supabase.from('people')
+    .update({
+      name: merged.name, phone: merged.phone || null, email: merged.email || null,
+      address: merged.address || null, organization: merged.organization || null, occupation: merged.occupation || null,
+      list_history: [...mergedHistorySet], updated_at: new Date().toISOString(),
+    })
+    .eq('id', primaryId);
+  if (updateErr) { console.error(updateErr); showToast('Merge failed — check connection'); return false; }
+
+  for (const otherId of otherIds) {
+    const { error: donErr } = await window.supabase.from('donations').update({ person_id: primaryId }).eq('person_id', otherId);
+    if (donErr) console.error(donErr);
+    const { error: delErr } = await window.supabase.from('people').delete().eq('id', otherId);
+    if (delErr) console.error(delErr);
+  }
+
+  state.lists.forEach(l => {
+    l.contacts.forEach(c => {
+      if (ids.includes(c.personId)) {
+        c.personId = primaryId;
+        Object.assign(c, { name: merged.name, phone: merged.phone, email: merged.email, address: merged.address, organization: merged.organization, occupation: merged.occupation });
+      }
+    });
+    mergeContactsWithinList(l, primaryId);
+  });
+  await saveData();
+  await loadPeople(true);
+  return true;
+}
+
 function openMergeModal(ids) {
   const people = ids.map(id => (peopleCache || []).find(p => p.id === id)).filter(Boolean);
   if (people.length < 2) return;
@@ -1975,47 +2135,15 @@ function mergeContactsWithinList(list, personId) {
 document.getElementById('confirmMergeBtn').addEventListener('click', async () => {
   const ids = mergeCandidateIds;
   if (ids.length < 2) { closeMergeModal(); return; }
-  const primaryId = ids[0];
-  const otherIds = ids.slice(1);
   const merged = {};
   MERGE_FIELDS.forEach(f => { merged[f.key] = document.getElementById('merge_' + f.key).value.trim(); });
   if (!merged.name) { showToast('Name is required'); return; }
 
-  const people = ids.map(id => (peopleCache || []).find(p => p.id === id)).filter(Boolean);
-  const mergedHistorySet = new Set();
-  people.forEach(p => (p.list_history || []).forEach(lid => mergedHistorySet.add(lid)));
-  state.lists.forEach(l => { if (l.contacts.some(c => ids.includes(c.personId))) mergedHistorySet.add(l.id); });
-
-  const { error: updateErr } = await window.supabase.from('people')
-    .update({
-      name: merged.name, phone: merged.phone || null, email: merged.email || null,
-      address: merged.address || null, organization: merged.organization || null, occupation: merged.occupation || null,
-      list_history: [...mergedHistorySet], updated_at: new Date().toISOString(),
-    })
-    .eq('id', primaryId);
-  if (updateErr) { console.error(updateErr); showToast('Merge failed — check connection'); return; }
-
-  for (const otherId of otherIds) {
-    const { error: donErr } = await window.supabase.from('donations').update({ person_id: primaryId }).eq('person_id', otherId);
-    if (donErr) console.error(donErr);
-    const { error: delErr } = await window.supabase.from('people').delete().eq('id', otherId);
-    if (delErr) console.error(delErr);
-  }
-
-  state.lists.forEach(l => {
-    l.contacts.forEach(c => {
-      if (ids.includes(c.personId)) {
-        c.personId = primaryId;
-        Object.assign(c, { name: merged.name, phone: merged.phone, email: merged.email, address: merged.address, organization: merged.organization, occupation: merged.occupation });
-      }
-    });
-    mergeContactsWithinList(l, primaryId);
-  });
-  await saveData();
+  const ok = await performMerge(ids, merged);
+  if (!ok) return;
 
   mergeSelectedIds.clear();
   closeMergeModal();
-  await loadPeople(true);
   renderMasterList();
   renderAll();
   showToast('Contacts merged');
