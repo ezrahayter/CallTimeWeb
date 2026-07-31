@@ -821,20 +821,34 @@ async function saveData() {
 function normPhone(p) { return (p || '').replace(/\D/g, ''); }
 function normEmail(e) { return (e || '').trim().toLowerCase(); }
 
+// Supabase/PostgREST caps a single response at 1000 rows by default, so
+// any table that can plausibly grow past that needs to be paged through
+// rather than fetched with one .select() — otherwise data silently gets
+// truncated (e.g. the Master List cutting off partway through the alphabet).
+async function fetchAllRows(buildQuery) {
+  const pageSize = 1000;
+  let rows = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await buildQuery().range(from, from + pageSize - 1);
+    if (error) { console.error(error); return rows; }
+    rows = rows.concat(data || []);
+    if (!data || data.length < pageSize) break;
+    from += pageSize;
+  }
+  return rows;
+}
+
 async function loadPeople(force) {
   if (peopleCache && !force) return peopleCache;
-  const { data, error } = await window.supabase.from('people').select('*').order('name');
-  if (error) { console.error(error); return peopleCache || []; }
-  peopleCache = data || [];
+  peopleCache = await fetchAllRows(() => window.supabase.from('people').select('*').order('name'));
   return peopleCache;
 }
 
 // ---- Possible-duplicate flags (same-name people awaiting review) ----
 async function loadDuplicateFlags(force) {
   if (duplicateFlags && !force) return duplicateFlags;
-  const { data, error } = await window.supabase.from('possible_duplicates').select('*');
-  if (error) { console.error(error); return duplicateFlags || []; }
-  duplicateFlags = data || [];
+  duplicateFlags = await fetchAllRows(() => window.supabase.from('possible_duplicates').select('*'));
   return duplicateFlags;
 }
 
@@ -1043,10 +1057,9 @@ async function loadDonations(personId) {
 let givingTotals = null;
 async function loadGivingTotals(force) {
   if (givingTotals && !force) return givingTotals;
-  const { data, error } = await window.supabase.from('donations').select('person_id, amount').eq('status', 'fulfilled');
-  if (error) { console.error(error); return givingTotals || new Map(); }
+  const data = await fetchAllRows(() => window.supabase.from('donations').select('person_id, amount').eq('status', 'fulfilled'));
   const totals = new Map();
-  (data || []).forEach(d => {
+  data.forEach(d => {
     const amt = Number(d.amount) || 0;
     totals.set(d.person_id, (totals.get(d.person_id) || 0) + amt);
   });
@@ -1057,10 +1070,9 @@ async function loadGivingTotals(force) {
 let committeeMap = null;
 async function loadCommitteeMap(force) {
   if (committeeMap && !force) return committeeMap;
-  const { data, error } = await window.supabase.from('donations').select('person_id, committee').not('committee', 'is', null);
-  if (error) { console.error(error); return committeeMap || new Map(); }
+  const data = await fetchAllRows(() => window.supabase.from('donations').select('person_id, committee').not('committee', 'is', null));
   const map = new Map();
-  (data || []).forEach(d => {
+  data.forEach(d => {
     const c = (d.committee || '').trim();
     if (!c) return;
     if (!map.has(d.person_id)) map.set(d.person_id, new Set());
