@@ -1327,19 +1327,31 @@ function filteredDirectoryPeople() {
 }
 
 // Addresses are freeform ("123 Main St, City, ST 12345"), not split into
-// fields, so the city is guessed from the text. Many real addresses are
-// missing the comma between city and state ("123 Main St, City ST 12345"),
-// which a pure comma-split can't handle -- so first try anchoring on a
-// trailing "City ST 12345" pattern directly, regardless of exact comma
-// placement, and only fall back to comma-splitting if that doesn't match.
+// fields, so the city is guessed from the comma segments. Real addresses
+// deviate from that 3-part shape in both directions: a comma missing
+// between city and state glues them together ("City ST 12345" as one
+// segment), while an extra comma between state and zip splits them apart
+// ("City, ST, 12345" as four segments). Handle both instead of assuming a
+// fixed part count.
 function extractCity(address) {
   const addr = (address || '').trim();
   if (!addr) return '';
-  const m = addr.match(/,?\s*([A-Za-z][A-Za-z .'-]*?),?\s+[A-Z]{2}\s*(\d{5}(-\d{4})?)?\s*$/);
-  if (m && m[1].trim()) return m[1].trim();
   const parts = addr.split(',').map(s => s.trim()).filter(Boolean);
+  // Drop trailing segments that are purely a state code or purely a zip
+  // (handles "..., City, ST, 12345" split into separate pieces).
+  while (parts.length > 1 && /^([A-Za-z]{2}|\d{5}(-\d{4})?)$/.test(parts[parts.length - 1])) {
+    parts.pop();
+  }
   if (parts.length >= 3) return parts[parts.length - 2];
-  if (parts.length === 2) return parts[0];
+  if (parts.length === 2) {
+    const last = parts[1];
+    // "City, ST[ zip]" -- the whole last segment is just the state(+zip).
+    if (/^[A-Za-z]{2}\s*\d{0,5}(-\d{4})?$/.test(last)) return parts[0];
+    // "street, City ST zip" -- city and state are glued together because
+    // there's no comma between them.
+    const stripped = last.replace(/\s+[A-Za-z]{2}\s*(\d{5}(-\d{4})?)?$/, '').trim();
+    return stripped || last;
+  }
   return '';
 }
 
