@@ -612,8 +612,14 @@
       <label>Pull people from your directory (optional — you can also import a CSV/Excel after creating the list)</label>
       <div class="directory-filters">
         <input type="text" id="directorySearchInput" placeholder="Search name, phone, email...">
-        <input type="text" id="directoryAddressInput" placeholder="Filter by address (city, zip, street...)">
         <input type="number" id="directoryMinGivingInput" placeholder="Min lifetime given ($)" min="0">
+        <div class="multi-select" id="cityMultiSelect">
+          <button type="button" class="multi-select-btn" id="cityMultiSelectBtn">
+            <span class="ms-label">Filter by city...</span>
+            <span class="multi-select-count hidden" id="cityMultiSelectCount"></span>
+          </button>
+          <div class="multi-select-panel" id="cityMultiSelectPanel"></div>
+        </div>
         <div class="multi-select" id="committeeMultiSelect">
           <button type="button" class="multi-select-btn" id="committeeMultiSelectBtn">
             <span class="ms-label">Given to committee...</span>
@@ -788,6 +794,7 @@ let realtimeChannel = null;
 let peopleCache = null;
 let selectedDirectoryIds = new Set();
 let selectedCommittees = new Set();
+let selectedCities = new Set();
 let duplicateFlags = null;
 
 function uid(prefix) { return prefix + '_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
@@ -1272,13 +1279,14 @@ document.getElementById('deleteListBtn').addEventListener('click', async () => {
 document.getElementById('newListBtn').addEventListener('click', async () => {
   document.getElementById('newListNameInput').value = '';
   document.getElementById('directorySearchInput').value = '';
-  document.getElementById('directoryAddressInput').value = '';
   document.getElementById('directoryMinGivingInput').value = '';
   selectedDirectoryIds = new Set();
   selectedCommittees = new Set();
+  selectedCities = new Set();
   await loadPeople();
   await loadGivingTotals();
   await loadCommitteeMap();
+  renderCityMultiSelect();
   renderCommitteeMultiSelect();
   renderDirectoryList();
   document.getElementById('newListBackdrop').classList.add('show');
@@ -1293,15 +1301,17 @@ document.getElementById('newListBackdrop').addEventListener('click', (e) => {
 
 function filteredDirectoryPeople() {
   const q = document.getElementById('directorySearchInput').value.toLowerCase().trim();
-  const addrQ = document.getElementById('directoryAddressInput').value.toLowerCase().trim();
   const minGivingRaw = document.getElementById('directoryMinGivingInput').value;
   const minGiving = minGivingRaw !== '' ? Number(minGivingRaw) : null;
   const totals = givingTotals || new Map();
   const committees = committeeMap || new Map();
   return (peopleCache || []).filter(p => {
     if (q && !(p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q))) return false;
-    if (addrQ && !(p.address || '').toLowerCase().includes(addrQ)) return false;
     if (minGiving != null && (totals.get(p.id) || 0) < minGiving) return false;
+    if (selectedCities.size) {
+      const city = extractCity(p.address).toLowerCase();
+      if (!city || !selectedCities.has(city)) return false;
+    }
     if (selectedCommittees.size) {
       const given = committees.get(p.id);
       if (!given || ![...given].some(c => selectedCommittees.has(c))) return false;
@@ -1310,10 +1320,61 @@ function filteredDirectoryPeople() {
   }).sort((a,b) => a.name.localeCompare(b.name));
 }
 
+// Addresses are freeform ("123 Main St, City, ST 12345"), not split into
+// fields, so the city is guessed from the comma-separated segments.
+function extractCity(address) {
+  const parts = (address || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length >= 3) return parts[parts.length - 2];
+  if (parts.length === 2) return /^[A-Za-z]{2}\s*\d{0,5}$/.test(parts[1]) ? parts[0] : parts[1];
+  return '';
+}
+
 function allCommitteeOptions() {
   const set = new Set();
   (committeeMap || new Map()).forEach(given => given.forEach(c => set.add(c)));
   return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+function allCityOptions() {
+  const map = new Map(); // lowercase key -> display label (first-seen casing)
+  (peopleCache || []).forEach(p => {
+    const city = extractCity(p.address);
+    if (!city) return;
+    const key = city.toLowerCase();
+    if (!map.has(key)) map.set(key, city);
+  });
+  return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+}
+
+function renderCityMultiSelect() {
+  const panel = document.getElementById('cityMultiSelectPanel');
+  const options = allCityOptions();
+  panel.innerHTML = options.length
+    ? options.map(([key, label]) => `
+        <label class="multi-select-option">
+          <input type="checkbox" value="${escapeHtml(key)}" ${selectedCities.has(key) ? 'checked' : ''}>
+          <span>${escapeHtml(label)}</span>
+        </label>
+      `).join('')
+    : `<div class="multi-select-empty">No addresses on file yet.</div>`;
+  panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedCities.add(cb.value); else selectedCities.delete(cb.value);
+      updateCityMultiSelectLabel();
+      renderDirectoryList();
+    });
+  });
+  updateCityMultiSelectLabel();
+}
+
+function updateCityMultiSelectLabel() {
+  const countEl = document.getElementById('cityMultiSelectCount');
+  if (selectedCities.size) {
+    countEl.textContent = selectedCities.size;
+    countEl.classList.remove('hidden');
+  } else {
+    countEl.classList.add('hidden');
+  }
 }
 
 function renderCommitteeMultiSelect() {
@@ -1347,13 +1408,19 @@ function updateCommitteeMultiSelectLabel() {
   }
 }
 
+document.getElementById('cityMultiSelectBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('cityMultiSelectPanel').classList.toggle('show');
+});
 document.getElementById('committeeMultiSelectBtn').addEventListener('click', (e) => {
   e.stopPropagation();
   document.getElementById('committeeMultiSelectPanel').classList.toggle('show');
 });
 document.addEventListener('click', (e) => {
-  const wrap = document.getElementById('committeeMultiSelect');
-  if (wrap && !wrap.contains(e.target)) document.getElementById('committeeMultiSelectPanel').classList.remove('show');
+  ['cityMultiSelect', 'committeeMultiSelect'].forEach(id => {
+    const wrap = document.getElementById(id);
+    if (wrap && !wrap.contains(e.target)) wrap.querySelector('.multi-select-panel').classList.remove('show');
+  });
 });
 
 function renderDirectoryList() {
@@ -1391,7 +1458,7 @@ function renderDirectoryList() {
   });
 }
 
-['directorySearchInput', 'directoryAddressInput', 'directoryMinGivingInput'].forEach(id => {
+['directorySearchInput', 'directoryMinGivingInput'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => renderDirectoryList());
 });
 
