@@ -588,6 +588,7 @@
         <input type="text" id="directorySearchInput" placeholder="Search name, phone, email...">
         <input type="text" id="directoryAddressInput" placeholder="Filter by address (city, zip, street...)">
         <input type="number" id="directoryMinGivingInput" placeholder="Min lifetime given ($)" min="0">
+        <input type="text" id="directoryCommitteeInput" placeholder="Given to committee...">
       </div>
       <div class="directory-toolbar">
         <span id="directorySelectedCount">0 selected</span>
@@ -1053,6 +1054,22 @@ async function loadGivingTotals(force) {
   return givingTotals;
 }
 
+let committeeMap = null;
+async function loadCommitteeMap(force) {
+  if (committeeMap && !force) return committeeMap;
+  const { data, error } = await window.supabase.from('donations').select('person_id, committee').not('committee', 'is', null);
+  if (error) { console.error(error); return committeeMap || new Map(); }
+  const map = new Map();
+  (data || []).forEach(d => {
+    const c = (d.committee || '').trim();
+    if (!c) return;
+    if (!map.has(d.person_id)) map.set(d.person_id, new Set());
+    map.get(d.person_id).add(c);
+  });
+  committeeMap = map;
+  return committeeMap;
+}
+
 function donationTotals(donations) {
   let pledged = 0, fulfilled = 0;
   donations.forEach(d => {
@@ -1212,9 +1229,11 @@ document.getElementById('newListBtn').addEventListener('click', async () => {
   document.getElementById('directorySearchInput').value = '';
   document.getElementById('directoryAddressInput').value = '';
   document.getElementById('directoryMinGivingInput').value = '';
+  document.getElementById('directoryCommitteeInput').value = '';
   selectedDirectoryIds = new Set();
   await loadPeople();
   await loadGivingTotals();
+  await loadCommitteeMap();
   renderDirectoryList();
   document.getElementById('newListBackdrop').classList.add('show');
 });
@@ -1231,11 +1250,17 @@ function filteredDirectoryPeople() {
   const addrQ = document.getElementById('directoryAddressInput').value.toLowerCase().trim();
   const minGivingRaw = document.getElementById('directoryMinGivingInput').value;
   const minGiving = minGivingRaw !== '' ? Number(minGivingRaw) : null;
+  const committeeQ = document.getElementById('directoryCommitteeInput').value.toLowerCase().trim();
   const totals = givingTotals || new Map();
+  const committees = committeeMap || new Map();
   return (peopleCache || []).filter(p => {
     if (q && !(p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q))) return false;
     if (addrQ && !(p.address || '').toLowerCase().includes(addrQ)) return false;
     if (minGiving != null && (totals.get(p.id) || 0) < minGiving) return false;
+    if (committeeQ) {
+      const given = committees.get(p.id);
+      if (!given || ![...given].some(c => c.toLowerCase().includes(committeeQ))) return false;
+    }
     return true;
   }).sort((a,b) => a.name.localeCompare(b.name));
 }
@@ -1244,6 +1269,7 @@ function renderDirectoryList() {
   const el = document.getElementById('directoryListEl');
   const people = filteredDirectoryPeople();
   const totals = givingTotals || new Map();
+  const committees = committeeMap || new Map();
   document.getElementById('directorySelectedCount').textContent = `${selectedDirectoryIds.size} selected`;
   if (!people.length) {
     el.innerHTML = `<div class="directory-empty">${(peopleCache||[]).length ? 'No one in your directory matches these filters.' : 'No one in your directory yet — import a CSV/Excel or add contacts to build it up.'}</div>`;
@@ -1251,7 +1277,13 @@ function renderDirectoryList() {
   }
   el.innerHTML = people.map(p => {
     const given = totals.get(p.id) || 0;
-    const subParts = [p.phone || p.email || '', p.address || '', given ? ('$' + given.toLocaleString() + ' lifetime') : ''].filter(Boolean);
+    const committeeList = committees.get(p.id);
+    const subParts = [
+      p.phone || p.email || '',
+      p.address || '',
+      given ? ('$' + given.toLocaleString() + ' lifetime') : '',
+      committeeList ? ('Gave to: ' + [...committeeList].join(', ')) : '',
+    ].filter(Boolean);
     return `
       <label class="directory-row">
         <input type="checkbox" data-person-id="${p.id}" ${selectedDirectoryIds.has(p.id) ? 'checked' : ''}>
@@ -1268,7 +1300,7 @@ function renderDirectoryList() {
   });
 }
 
-['directorySearchInput', 'directoryAddressInput', 'directoryMinGivingInput'].forEach(id => {
+['directorySearchInput', 'directoryAddressInput', 'directoryMinGivingInput', 'directoryCommitteeInput'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => renderDirectoryList());
 });
 
