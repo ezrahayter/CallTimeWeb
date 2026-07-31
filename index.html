@@ -1314,7 +1314,7 @@ function filteredDirectoryPeople() {
     }
     if (selectedCommittees.size) {
       const given = committees.get(p.id);
-      if (!given || ![...given].some(c => selectedCommittees.has(c))) return false;
+      if (!given || ![...given].some(c => selectedCommittees.has(c.toLowerCase()))) return false;
     }
     return true;
   }).sort((a,b) => a.name.localeCompare(b.name));
@@ -1329,10 +1329,17 @@ function extractCity(address) {
   return '';
 }
 
+// Committee text comes from freeform imports, so the same committee often
+// shows up with different casing across records ("Andrew Learned" vs
+// "ANDREW LEARNED") — dedupe case-insensitively so those don't fork into
+// separate, non-matching checkboxes.
 function allCommitteeOptions() {
-  const set = new Set();
-  (committeeMap || new Map()).forEach(given => given.forEach(c => set.add(c)));
-  return [...set].sort((a, b) => a.localeCompare(b));
+  const map = new Map(); // lowercase key -> display label (first-seen casing)
+  (committeeMap || new Map()).forEach(given => given.forEach(c => {
+    const key = c.toLowerCase();
+    if (!map.has(key)) map.set(key, c);
+  }));
+  return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]));
 }
 
 function allCityOptions() {
@@ -1381,10 +1388,10 @@ function renderCommitteeMultiSelect() {
   const panel = document.getElementById('committeeMultiSelectPanel');
   const options = allCommitteeOptions();
   panel.innerHTML = options.length
-    ? options.map(c => `
+    ? options.map(([key, label]) => `
         <label class="multi-select-option">
-          <input type="checkbox" value="${escapeHtml(c)}" ${selectedCommittees.has(c) ? 'checked' : ''}>
-          <span>${escapeHtml(c)}</span>
+          <input type="checkbox" value="${escapeHtml(key)}" ${selectedCommittees.has(key) ? 'checked' : ''}>
+          <span>${escapeHtml(label)}</span>
         </label>
       `).join('')
     : `<div class="multi-select-empty">No committees recorded yet.</div>`;
