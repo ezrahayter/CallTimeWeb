@@ -436,7 +436,7 @@
         <div style="display:flex; flex-direction:column; gap:8px;">
           <button class="full" id="importBtn">Import CSV or Excel</button>
           <input type="file" id="csvFileInput" accept=".csv,.xlsx,.xls">
-          <div class="csv-help">CSV or Excel (.xlsx/.xls). Columns: Name, Phone, Email, Address, Organization, Occupation, Ask, Last Gift, Notes, Category (optional — Not Complete / Current / Needs Follow Up / Complete)</div>
+          <div class="csv-help">CSV or Excel (.xlsx/.xls). Columns: Name, Phone, Email, Address, City, Organization, Occupation, Ask, Last Gift, Notes, Category (optional — Not Complete / Current / Needs Follow Up / Complete). Adding a City column avoids guessing it from the Address text.</div>
           <button class="full" id="exportBtn">Export list as CSV</button>
           <button class="full primary" id="addContactBtn">+ Add contact</button>
         </div>
@@ -483,7 +483,7 @@
     <div class="roster-header">
       <h2 style="font-family:'Lora',serif; font-size:18px; margin:0;">Master Contact List</h2>
       <div>
-        <button class="ghost" id="masterImportBtn" title="Import contacts straight into the Master List, without adding them to a candidate list. Include Amount / Date / Committee columns to also log donation history.">Import CSV or Excel</button>
+        <button class="ghost" id="masterImportBtn" title="Import contacts straight into the Master List, without adding them to a candidate list. Include a City column to set it directly instead of guessing from Address. Include Amount / Date / Committee columns to also log donation history.">Import CSV or Excel</button>
         <input type="file" id="masterCsvFileInput" accept=".csv,.xlsx,.xls" class="hidden">
       </div>
     </div>
@@ -1057,7 +1057,7 @@ function listsForPerson(p) {
   return state.lists.filter(l => allIds.has(l.id)).map(l => ({ list: l, current: currentIds.has(l.id) }));
 }
 
-async function findOrCreatePerson({ name, phone, email, address, organization, occupation, ask, lastGift, notes, category }) {
+async function findOrCreatePerson({ name, phone, email, address, city, organization, occupation, ask, lastGift, notes, category }) {
   const people = await loadPeople();
   const np = normPhone(phone), ne = normEmail(email);
   let match = null;
@@ -1067,6 +1067,7 @@ async function findOrCreatePerson({ name, phone, email, address, organization, o
   const { data, error } = await window.supabase.from('people')
     .insert({
       name, phone: phone || null, email: email || null, address: address || null,
+      city: city || (address ? extractCity(address) : null) || null,
       organization: organization || null, occupation: occupation || null,
       ask: ask || null, last_gift: lastGift || null, notes: notes || null,
       category: category || 'not-complete',
@@ -1309,7 +1310,7 @@ function filteredDirectoryPeople() {
     if (q && !(p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q))) return false;
     if (minGiving != null && (totals.get(p.id) || 0) < minGiving) return false;
     if (selectedCities.size) {
-      const city = extractCity(p.address).toLowerCase();
+      const city = personCity(p).toLowerCase();
       if (!city || !selectedCities.has(city)) return false;
     }
     if (selectedCommittees.size) {
@@ -1355,6 +1356,12 @@ function extractCity(address) {
   return '';
 }
 
+// Prefer the explicit City field (set directly on import or by the
+// backfill) over guessing from the freeform Address text.
+function personCity(p) {
+  return (p.city && p.city.trim()) || extractCity(p.address);
+}
+
 // Committee text comes from freeform imports, so the same committee often
 // shows up with different casing across records ("Andrew Learned" vs
 // "ANDREW LEARNED") — dedupe case-insensitively so those don't fork into
@@ -1371,7 +1378,7 @@ function allCommitteeOptions() {
 function allCityOptions() {
   const map = new Map(); // lowercase key -> display label (first-seen casing)
   (peopleCache || []).forEach(p => {
-    const city = extractCity(p.address);
+    const city = personCity(p);
     if (!city) return;
     const key = city.toLowerCase();
     if (!map.has(key)) map.set(key, city);
@@ -2012,6 +2019,7 @@ function buildImportIndex(header) {
     phone: header.findIndex(h => h.includes('phone')),
     email: header.findIndex(h => h.includes('email')),
     address: header.findIndex(h => h.includes('address')),
+    city: header.findIndex(h => h.includes('city')),
     organization: header.findIndex(h => h.includes('org')),
     occupation: header.findIndex(h => h.includes('occupation') || h.includes('job') || h.includes('title')),
     ask: header.findIndex(h => h.includes('ask')),
@@ -2085,9 +2093,10 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
     const phone = idx.phone > -1 ? (r[idx.phone]||'').trim() : '';
     const email = idx.email > -1 ? (r[idx.email]||'').trim() : '';
     const address = idx.address > -1 ? (r[idx.address]||'').trim() : '';
+    const city = idx.city > -1 ? (r[idx.city]||'').trim() : '';
     const organization = idx.organization > -1 ? (r[idx.organization]||'').trim() : '';
     const occupation = idx.occupation > -1 ? (r[idx.occupation]||'').trim() : '';
-    const personId = await findOrCreatePerson({ name, phone, email, address, organization, occupation });
+    const personId = await findOrCreatePerson({ name, phone, email, address, city, organization, occupation });
     list.contacts.push({
       id: uid('c'),
       name,
@@ -2137,13 +2146,14 @@ document.getElementById('masterCsvFileInput').addEventListener('change', async (
     const phone = idx.phone > -1 ? (r[idx.phone]||'').trim() : '';
     const email = idx.email > -1 ? (r[idx.email]||'').trim() : '';
     const address = idx.address > -1 ? (r[idx.address]||'').trim() : '';
+    const city = idx.city > -1 ? (r[idx.city]||'').trim() : '';
     const organization = idx.organization > -1 ? (r[idx.organization]||'').trim() : '';
     const occupation = idx.occupation > -1 ? (r[idx.occupation]||'').trim() : '';
     const ask = idx.ask > -1 ? (r[idx.ask]||'').trim() : '';
     const lastGift = idx.lastGift > -1 ? (r[idx.lastGift]||'').trim() : '';
     const notes = idx.notes > -1 ? (r[idx.notes]||'').trim() : '';
     const category = idx.category > -1 ? normalizeCategory(r[idx.category]) : '';
-    const personId = await findOrCreatePerson({ name, phone, email, address, organization, occupation, ask, lastGift, notes, category });
+    const personId = await findOrCreatePerson({ name, phone, email, address, city, organization, occupation, ask, lastGift, notes, category });
     added++;
     if (await maybeLogImportedDonation(personId, r, donationIdx)) donationsAdded++;
   }
