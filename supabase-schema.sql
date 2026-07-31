@@ -69,6 +69,16 @@ alter table people add column if not exists address text;
 alter table people add column if not exists organization text;
 alter table people add column if not exists occupation text;
 
+-- Directory-level defaults, mainly so importing straight into the Master
+-- List (without adding people to a candidate list) has somewhere to put
+-- these instead of dropping them. They only apply as starting values when
+-- someone is later added to a list — they don't overwrite an existing list
+-- contact's own call status, notes, or gift info.
+alter table people add column if not exists ask text;
+alter table people add column if not exists last_gift text;
+alter table people add column if not exists notes text;
+alter table people add column if not exists category text not null default 'not-complete';
+
 create index if not exists people_phone_idx on people (phone) where phone is not null and phone <> '';
 create index if not exists people_email_idx on people (lower(email)) where email is not null and email <> '';
 
@@ -123,6 +133,10 @@ create table if not exists donations (
 );
 
 create index if not exists donations_person_idx on donations (person_id);
+
+-- Which campaign/committee a gift went to, so one donor's history can show
+-- giving spread across multiple different committees.
+alter table donations add column if not exists committee text;
 
 -- Pledges are logged as donation rows too — 'pledged' means promised but not
 -- yet received; flipping to 'fulfilled' (and stamping fulfilled_on) is how

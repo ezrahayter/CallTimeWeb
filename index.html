@@ -253,6 +253,10 @@
     background: var(--amber-bg); color: var(--brass-dark); border: 1px solid var(--brass);
     padding: 1px 6px; border-radius: 8px; white-space: nowrap;
   }
+  .committee-badge {
+    font-size: 10px; font-weight: 600; background: var(--sky-bg); color: var(--sky);
+    padding: 1px 6px; border-radius: 8px; white-space: nowrap;
+  }
   .mark-fulfilled-btn {
     font-size: 10.5px; border: 1px solid var(--pledge); color: var(--pledge); background: var(--pledge-bg);
     border-radius: 8px; padding: 1px 7px; cursor: pointer; white-space: nowrap;
@@ -265,6 +269,7 @@
   .donation-form input[type="text"], .donation-form input[type="number"], .donation-form input[type="date"] { font-size: 12.5px; padding: 6px 8px; }
   .donation-form .amt-field { width: 90px; }
   .donation-form .date-field { width: 130px; }
+  .donation-form .committee-field { width: 140px; }
   .donation-form .note-field { flex: 1; min-width: 100px; }
   .donation-form .pledge-field { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--slate); white-space: nowrap; margin-bottom: 8px; }
   .donation-form .pledge-field input { margin: 0; }
@@ -451,6 +456,10 @@
   <div id="masterListView" class="hidden">
     <div class="roster-header">
       <h2 style="font-family:'Lora',serif; font-size:18px; margin:0;">Master Contact List</h2>
+      <div>
+        <button class="ghost" id="masterImportBtn" title="Import contacts straight into the Master List, without adding them to a candidate list. Include Amount / Date / Committee columns to also log donation history.">Import CSV or Excel</button>
+        <input type="file" id="masterCsvFileInput" accept=".csv,.xlsx,.xls" class="hidden">
+      </div>
     </div>
     <div class="controls-row merge-bar" style="margin-bottom:12px;">
       <input type="text" id="masterSearchInput" placeholder="Search name, phone, email, org, address...">
@@ -546,6 +555,10 @@
           <label>Date</label>
           <input type="date" id="donationDate">
         </div>
+        <div class="field committee-field">
+          <label>Committee</label>
+          <input type="text" id="donationCommittee" placeholder="e.g. Smith for Senate">
+        </div>
         <div class="field note-field">
           <label>Note</label>
           <input type="text" id="donationNote" placeholder="e.g. 2025 fall gala">
@@ -632,6 +645,29 @@
         <input type="text" id="pOccupation" placeholder="CEO">
       </div>
     </div>
+    <div class="field-row">
+      <div class="field">
+        <label>Suggested ask</label>
+        <input type="text" id="pAsk" placeholder="$250">
+      </div>
+      <div class="field">
+        <label>Last gift</label>
+        <input type="text" id="pLastGift" placeholder="$100, March 2026">
+      </div>
+    </div>
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="pNotes" placeholder="General notes about this person, not tied to any one list..."></textarea>
+    </div>
+    <div class="field">
+      <label>Default status for new lists</label>
+      <select id="pCategory">
+        <option value="not-complete">Not Complete</option>
+        <option value="current">Current</option>
+        <option value="needs-follow-up">Needs Follow Up</option>
+        <option value="complete">Complete</option>
+      </select>
+    </div>
     <div class="field">
       <label>Appears on</label>
       <div class="roster-mini" id="personListsInfo">—</div>
@@ -648,6 +684,10 @@
         <div class="field date-field">
           <label>Date</label>
           <input type="date" id="personDonationDate">
+        </div>
+        <div class="field committee-field">
+          <label>Committee</label>
+          <input type="text" id="personDonationCommittee" placeholder="e.g. Smith for Senate">
         </div>
         <div class="field note-field">
           <label>Note</label>
@@ -962,7 +1002,7 @@ function listsForPerson(p) {
   return state.lists.filter(l => allIds.has(l.id)).map(l => ({ list: l, current: currentIds.has(l.id) }));
 }
 
-async function findOrCreatePerson({ name, phone, email, address, organization, occupation }) {
+async function findOrCreatePerson({ name, phone, email, address, organization, occupation, ask, lastGift, notes, category }) {
   const people = await loadPeople();
   const np = normPhone(phone), ne = normEmail(email);
   let match = null;
@@ -970,7 +1010,12 @@ async function findOrCreatePerson({ name, phone, email, address, organization, o
   if (!match && ne) match = people.find(p => ne && normEmail(p.email) === ne);
   if (match) return match.id;
   const { data, error } = await window.supabase.from('people')
-    .insert({ name, phone: phone || null, email: email || null, address: address || null, organization: organization || null, occupation: occupation || null })
+    .insert({
+      name, phone: phone || null, email: email || null, address: address || null,
+      organization: organization || null, occupation: occupation || null,
+      ask: ask || null, last_gift: lastGift || null, notes: notes || null,
+      category: category || 'not-complete',
+    })
     .select().single();
   if (error) { console.error(error); return null; }
   peopleCache.push(data);
@@ -1017,13 +1062,28 @@ function donationTotals(donations) {
   return { pledged, fulfilled };
 }
 
+// donations are already sorted newest-first by loadDonations, so the first
+// non-pledged one with an amount is the most recent gift actually received.
+function lastFulfilledGift(donations) {
+  return donations.find(d => d.status !== 'pledged' && d.amount != null) || null;
+}
+
+function donationTotalsHtml(donations) {
+  const { pledged, fulfilled } = donationTotals(donations);
+  const last = lastFulfilledGift(donations);
+  const lastHtml = last
+    ? `<span>Last gift: <b>$${Number(last.amount).toLocaleString()}</b>${last.donated_on ? ' (' + escapeHtml(last.donated_on) + ')' : ''}</span>`
+    : '';
+  return `<span>Pledged: <b>$${pledged.toLocaleString()}</b></span><span>Received: <b>$${fulfilled.toLocaleString()}</b></span>${lastHtml}`;
+}
+
 function donationEntryHtml(d) {
   const amt = d.amount != null ? '$' + Number(d.amount).toLocaleString() : '—';
   const date = d.donated_on || '';
   const isPledged = d.status === 'pledged';
   return `
     <div class="donation-entry${isPledged ? ' is-pledged' : ''}">
-      <span>${escapeHtml(date)}${d.note ? ' — ' + escapeHtml(d.note) : ''}${isPledged ? ' <span class="pledge-badge">Pledged</span>' : ''}</span>
+      <span>${escapeHtml(date)}${d.note ? ' — ' + escapeHtml(d.note) : ''}${d.committee ? ' <span class="committee-badge">' + escapeHtml(d.committee) + '</span>' : ''}${isPledged ? ' <span class="pledge-badge">Pledged</span>' : ''}</span>
       <span style="display:flex; align-items:center; gap:6px;">
         <span class="amt">${amt}</span>
         ${isPledged ? `<button class="mark-fulfilled-btn" data-id="${d.id}">Mark received</button>` : ''}
@@ -1229,7 +1289,7 @@ document.getElementById('createNewListBtn').addEventListener('click', async () =
     .map(p => ({
       id: uid('c'), name: p.name, phone: p.phone || '', email: p.email || '',
       address: p.address || '', organization: p.organization || '', occupation: p.occupation || '',
-      ask: '', lastGift: '', notes: '', category: 'not-complete',
+      ask: p.ask || '', lastGift: p.last_gift || '', notes: p.notes || '', category: p.category || 'not-complete',
       personId: p.id, priority: Date.now(), callLog: []
     }));
   const list = { id: uid('list'), name, goal: 10, contacts };
@@ -1294,6 +1354,33 @@ function renderInlineLog(c) {
 let skippedIds = new Set();
 let skipHistory = [];
 
+async function renderCallCardDonations(c) {
+  const section = document.getElementById('callCardDonations');
+  if (!section) return;
+  if (!c.personId) { section.style.display = 'none'; return; }
+  section.style.display = '';
+  const listEl = document.getElementById('callCardDonationsList');
+  const totalsEl = document.getElementById('callCardDonationTotals');
+  listEl.innerHTML = '<div class="empty">Loading…</div>';
+  totalsEl.innerHTML = '';
+  const donations = await loadDonations(c.personId);
+  // The card may have moved on to a different contact while this was loading.
+  const card = document.querySelector('.call-card');
+  if (!card || card.dataset.contactId !== c.id) return;
+  if (!donations.length) {
+    listEl.innerHTML = '<div class="empty">No donations logged yet.</div>';
+    return;
+  }
+  totalsEl.innerHTML = donationTotalsHtml(donations);
+  listEl.innerHTML = donations.map(donationEntryHtml).join('');
+  listEl.querySelectorAll('.mark-fulfilled-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const ok = await markDonationFulfilled(btn.dataset.id);
+      if (ok) { showToast('Marked as received'); await renderCallCardDonations(c); }
+    });
+  });
+}
+
 function renderUpNext(list) {
   const queue = list.contacts.filter(c => c.category !== 'complete' && !skippedIds.has(c.id))
     .sort((a,b) => (catWeight(b.category) - catWeight(a.category)) || ((a.priority||0) - (b.priority||0)));
@@ -1322,7 +1409,7 @@ function renderUpNext(list) {
   }
   const c = queue[0];
   wrap.innerHTML = `
-    <div class="call-card">
+    <div class="call-card" data-contact-id="${c.id}">
       <div class="eyebrow">${catLabel(c.category)}</div>
       <h3>${escapeHtml(c.name)}</h3>
       <div class="call-meta">
@@ -1348,8 +1435,14 @@ function renderUpNext(list) {
         <button class="ghost" data-action="edit">Edit contact</button>
       </div>
       <div class="call-log-list" id="inlineCallLog">${renderInlineLog(c)}</div>
+      <div class="donations-section" id="callCardDonations" style="display:none;">
+        <h4>Donation History</h4>
+        <div class="donation-totals" id="callCardDonationTotals"></div>
+        <div class="donations-list" id="callCardDonationsList"></div>
+      </div>
     </div>
   `;
+  renderCallCardDonations(c);
   let chosenCat = c.category;
   const catRow = wrap.querySelector('#catRow');
   catRow.querySelectorAll('.cat-btn').forEach(btn => {
@@ -1491,6 +1584,7 @@ async function openModal(id) {
   const donationsSection = document.getElementById('donationsSection');
   document.getElementById('donationAmount').value = '';
   document.getElementById('donationDate').value = todayStr();
+  document.getElementById('donationCommittee').value = '';
   document.getElementById('donationNote').value = '';
   document.getElementById('donationIsPledge').checked = false;
   if (isEdit && c && c.personId) {
@@ -1512,8 +1606,7 @@ async function renderDonations(personId) {
     listEl.innerHTML = '<div class="empty">No donations logged yet.</div>';
     return;
   }
-  const { pledged, fulfilled } = donationTotals(donations);
-  totalsEl.innerHTML = `<span>Pledged: <b>$${pledged.toLocaleString()}</b></span><span>Received: <b>$${fulfilled.toLocaleString()}</b></span>`;
+  totalsEl.innerHTML = donationTotalsHtml(donations);
   listEl.innerHTML = donations.map(donationEntryHtml).join('');
   listEl.querySelectorAll('.mark-fulfilled-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -1531,14 +1624,16 @@ document.getElementById('addDonationBtn').addEventListener('click', async () => 
   const amountRaw = document.getElementById('donationAmount').value;
   const amount = amountRaw !== '' ? Number(amountRaw) : null;
   const donated_on = document.getElementById('donationDate').value || null;
+  const committee = document.getElementById('donationCommittee').value.trim();
   const note = document.getElementById('donationNote').value.trim();
   const isPledge = document.getElementById('donationIsPledge').checked;
   if (amount == null && !note) { showToast('Enter an amount or a note'); return; }
   const { error } = await window.supabase.from('donations')
-    .insert({ person_id: c.personId, amount, donated_on, note: note || null, status: isPledge ? 'pledged' : 'fulfilled' });
+    .insert({ person_id: c.personId, amount, donated_on, committee: committee || null, note: note || null, status: isPledge ? 'pledged' : 'fulfilled' });
   if (error) { console.error(error); showToast('Could not save donation'); return; }
   document.getElementById('donationIsPledge').checked = false;
   document.getElementById('donationAmount').value = '';
+  document.getElementById('donationCommittee').value = '';
   document.getElementById('donationNote').value = '';
   await renderDonations(c.personId);
   showToast(isPledge ? 'Pledge logged' : 'Donation logged');
@@ -1683,18 +1778,13 @@ function normalizeCategory(raw) {
   return 'not-complete';
 }
 
-document.getElementById('importBtn').addEventListener('click', () => {
-  document.getElementById('csvFileInput').click();
-});
-
-document.getElementById('csvFileInput').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+async function parseImportRows(file) {
   const isExcel = /\.xlsx?$/i.test(file.name);
-  const rows = isExcel ? parseExcel(await file.arrayBuffer()) : parseCsv(await file.text());
-  if (!rows.length) { showToast('File appears empty'); return; }
-  const header = rows[0].map(h => h.toLowerCase().trim());
-  const idx = {
+  return isExcel ? parseExcel(await file.arrayBuffer()) : parseCsv(await file.text());
+}
+
+function buildImportIndex(header) {
+  return {
     name: header.findIndex(h => h.includes('name')),
     phone: header.findIndex(h => h.includes('phone')),
     email: header.findIndex(h => h.includes('email')),
@@ -1706,6 +1796,19 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
     notes: header.findIndex(h => h.includes('note')),
     category: header.findIndex(h => h.includes('categ') || h.includes('status')),
   };
+}
+
+document.getElementById('importBtn').addEventListener('click', () => {
+  document.getElementById('csvFileInput').click();
+});
+
+document.getElementById('csvFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const rows = await parseImportRows(file);
+  if (!rows.length) { showToast('File appears empty'); return; }
+  const header = rows[0].map(h => h.toLowerCase().trim());
+  const idx = buildImportIndex(header);
   if (idx.name === -1) { showToast('File needs a Name column'); return; }
   const list = activeList();
   let added = 0;
@@ -1741,6 +1844,67 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
   await saveData();
   renderAll();
   showToast(`Imported ${added} contact${added === 1 ? '' : 's'}`);
+  e.target.value = '';
+});
+
+document.getElementById('masterImportBtn').addEventListener('click', () => {
+  document.getElementById('masterCsvFileInput').click();
+});
+
+function parseImportDate(raw) {
+  if (!raw || !raw.trim()) return null;
+  const d = new Date(raw.trim());
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+document.getElementById('masterCsvFileInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const rows = await parseImportRows(file);
+  if (!rows.length) { showToast('File appears empty'); return; }
+  const header = rows[0].map(h => h.toLowerCase().trim());
+  const idx = buildImportIndex(header);
+  if (idx.name === -1) { showToast('File needs a Name column'); return; }
+  const donationIdx = {
+    amount: header.findIndex(h => h.includes('amount')),
+    date: header.findIndex(h => h.includes('date')),
+    committee: header.findIndex(h => h.includes('committee') || h.includes('campaign')),
+  };
+  let added = 0;
+  let donationsAdded = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const name = (r[idx.name] || '').trim();
+    if (!name) continue;
+    const phone = idx.phone > -1 ? (r[idx.phone]||'').trim() : '';
+    const email = idx.email > -1 ? (r[idx.email]||'').trim() : '';
+    const address = idx.address > -1 ? (r[idx.address]||'').trim() : '';
+    const organization = idx.organization > -1 ? (r[idx.organization]||'').trim() : '';
+    const occupation = idx.occupation > -1 ? (r[idx.occupation]||'').trim() : '';
+    const ask = idx.ask > -1 ? (r[idx.ask]||'').trim() : '';
+    const lastGift = idx.lastGift > -1 ? (r[idx.lastGift]||'').trim() : '';
+    const notes = idx.notes > -1 ? (r[idx.notes]||'').trim() : '';
+    const category = idx.category > -1 ? normalizeCategory(r[idx.category]) : '';
+    const personId = await findOrCreatePerson({ name, phone, email, address, organization, occupation, ask, lastGift, notes, category });
+    added++;
+
+    const amountRaw = donationIdx.amount > -1 ? (r[donationIdx.amount]||'').trim() : '';
+    if (personId && amountRaw) {
+      const amount = Number(amountRaw.replace(/[^0-9.\-]/g, ''));
+      if (!isNaN(amount)) {
+        const committee = donationIdx.committee > -1 ? (r[donationIdx.committee]||'').trim() : '';
+        const donated_on = donationIdx.date > -1 ? parseImportDate(r[donationIdx.date]) : null;
+        const { error: donErr } = await window.supabase.from('donations')
+          .insert({ person_id: personId, amount, donated_on, committee: committee || null, status: 'fulfilled' });
+        if (donErr) console.error(donErr); else donationsAdded++;
+      }
+    }
+  }
+  await loadPeople(true);
+  await loadDuplicateFlags(true);
+  renderMasterList();
+  showToast(`Imported ${added} contact${added === 1 ? '' : 's'} into the Master List` +
+    (donationsAdded ? ` and logged ${donationsAdded} donation${donationsAdded === 1 ? '' : 's'}` : ''));
   e.target.value = '';
 });
 
@@ -1921,6 +2085,10 @@ async function openPersonModal(personId) {
   document.getElementById('pAddress').value = p.address || '';
   document.getElementById('pOrganization').value = p.organization || '';
   document.getElementById('pOccupation').value = p.occupation || '';
+  document.getElementById('pAsk').value = p.ask || '';
+  document.getElementById('pLastGift').value = p.last_gift || '';
+  document.getElementById('pNotes').value = p.notes || '';
+  document.getElementById('pCategory').value = p.category || 'not-complete';
   const listLines = listsForPerson(p).map(e => {
     if (e.current) {
       const c = e.list.contacts.find(c => c.personId === personId);
@@ -1931,6 +2099,7 @@ async function openPersonModal(personId) {
   document.getElementById('personListsInfo').innerHTML = listLines.length ? listLines.join('') : 'Not on any candidate list yet.';
   document.getElementById('personDonationAmount').value = '';
   document.getElementById('personDonationDate').value = todayStr();
+  document.getElementById('personDonationCommittee').value = '';
   document.getElementById('personDonationNote').value = '';
   document.getElementById('personDonationIsPledge').checked = false;
   await renderPersonDonations(personId);
@@ -1947,8 +2116,7 @@ async function renderPersonDonations(personId) {
     listEl.innerHTML = '<div class="empty">No donations logged yet.</div>';
     return;
   }
-  const { pledged, fulfilled } = donationTotals(donations);
-  totalsEl.innerHTML = `<span>Pledged: <b>$${pledged.toLocaleString()}</b></span><span>Received: <b>$${fulfilled.toLocaleString()}</b></span>`;
+  totalsEl.innerHTML = donationTotalsHtml(donations);
   listEl.innerHTML = donations.map(donationEntryHtml).join('');
   listEl.querySelectorAll('.mark-fulfilled-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -1964,14 +2132,16 @@ document.getElementById('addPersonDonationBtn').addEventListener('click', async 
   const amountRaw = document.getElementById('personDonationAmount').value;
   const amount = amountRaw !== '' ? Number(amountRaw) : null;
   const donated_on = document.getElementById('personDonationDate').value || null;
+  const committee = document.getElementById('personDonationCommittee').value.trim();
   const note = document.getElementById('personDonationNote').value.trim();
   const isPledge = document.getElementById('personDonationIsPledge').checked;
   if (amount == null && !note) { showToast('Enter an amount or a note'); return; }
   const { error } = await window.supabase.from('donations')
-    .insert({ person_id: personId, amount, donated_on, note: note || null, status: isPledge ? 'pledged' : 'fulfilled' });
+    .insert({ person_id: personId, amount, donated_on, committee: committee || null, note: note || null, status: isPledge ? 'pledged' : 'fulfilled' });
   if (error) { console.error(error); showToast('Could not save donation'); return; }
   document.getElementById('personDonationIsPledge').checked = false;
   document.getElementById('personDonationAmount').value = '';
+  document.getElementById('personDonationCommittee').value = '';
   document.getElementById('personDonationNote').value = '';
   await renderPersonDonations(personId);
   showToast(isPledge ? 'Pledge logged' : 'Donation logged');
@@ -1994,12 +2164,24 @@ document.getElementById('savePersonBtn').addEventListener('click', async () => {
   const address = document.getElementById('pAddress').value.trim();
   const organization = document.getElementById('pOrganization').value.trim();
   const occupation = document.getElementById('pOccupation').value.trim();
+  const ask = document.getElementById('pAsk').value.trim();
+  const lastGift = document.getElementById('pLastGift').value.trim();
+  const notes = document.getElementById('pNotes').value.trim();
+  const category = document.getElementById('pCategory').value;
   const { error } = await window.supabase.from('people')
-    .update({ name, phone: phone || null, email: email || null, address: address || null, organization: organization || null, occupation: occupation || null, updated_at: new Date().toISOString() })
+    .update({
+      name, phone: phone || null, email: email || null, address: address || null,
+      organization: organization || null, occupation: occupation || null,
+      ask: ask || null, last_gift: lastGift || null, notes: notes || null, category,
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', personId);
   if (error) { console.error(error); showToast('Could not save'); return; }
   const cached = (peopleCache || []).find(x => x.id === personId);
-  if (cached) Object.assign(cached, { name, phone, email, address, organization, occupation });
+  if (cached) Object.assign(cached, { name, phone, email, address, organization, occupation, ask, last_gift: lastGift, notes, category });
+  // Ask/Last Gift/Notes/Category only apply as defaults for lists this
+  // person is added to later — they don't overwrite an existing list
+  // contact's own call status, notes, or gift info.
   let touchedLists = false;
   state.lists.forEach(l => {
     l.contacts.forEach(c => {
