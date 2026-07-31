@@ -1327,11 +1327,19 @@ function filteredDirectoryPeople() {
 }
 
 // Addresses are freeform ("123 Main St, City, ST 12345"), not split into
-// fields, so the city is guessed from the comma-separated segments.
+// fields, so the city is guessed from the text. Many real addresses are
+// missing the comma between city and state ("123 Main St, City ST 12345"),
+// which a pure comma-split can't handle -- so first try anchoring on a
+// trailing "City ST 12345" pattern directly, regardless of exact comma
+// placement, and only fall back to comma-splitting if that doesn't match.
 function extractCity(address) {
-  const parts = (address || '').split(',').map(s => s.trim()).filter(Boolean);
+  const addr = (address || '').trim();
+  if (!addr) return '';
+  const m = addr.match(/,?\s*([A-Za-z][A-Za-z .'-]*?),?\s+[A-Z]{2}\s*(\d{5}(-\d{4})?)?\s*$/);
+  if (m && m[1].trim()) return m[1].trim();
+  const parts = addr.split(',').map(s => s.trim()).filter(Boolean);
   if (parts.length >= 3) return parts[parts.length - 2];
-  if (parts.length === 2) return /^[A-Za-z]{2}\s*\d{0,5}$/.test(parts[1]) ? parts[0] : parts[1];
+  if (parts.length === 2) return parts[0];
   return '';
 }
 
