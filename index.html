@@ -1519,7 +1519,7 @@ document.getElementById('createNewListBtn').addEventListener('click', async () =
     .map(p => ({
       id: uid('c'), name: p.name, phone: p.phone || '', email: p.email || '',
       address: p.address || '', organization: p.organization || '', occupation: p.occupation || '',
-      ask: p.ask || '', lastGift: p.last_gift || '', notes: p.notes || '', category: p.category || 'not-complete',
+      ask: p.ask || '', lastGift: p.last_gift || '', notes: p.notes || '', category: 'current',
       personId: p.id, priority: Date.now(), callLog: []
     }));
   const list = { id: uid('list'), name, goal: 10, contacts };
