@@ -289,6 +289,32 @@
   .directory-toolbar { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--slate); }
   .directory-toolbar button { padding: 4px 10px; font-size: 11.5px; }
 
+  .multi-select { position: relative; flex: 1; min-width: 150px; }
+  .multi-select-btn {
+    width: 100%; text-align: left; border: 1px solid var(--hairline); border-radius: 4px;
+    padding: 8px 10px; font-family: 'IBM Plex Sans', sans-serif; font-size: 13px;
+    background: var(--card-bg); color: var(--ink); cursor: pointer;
+    display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  }
+  .multi-select-btn:after { content: '▾'; color: var(--slate); font-size: 10px; }
+  .multi-select-btn .ms-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .multi-select-count {
+    background: var(--ink); color: var(--parchment); border-radius: 8px; font-size: 10.5px;
+    padding: 1px 6px; flex-shrink: 0;
+  }
+  .multi-select-panel {
+    display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+    background: var(--card-bg); border: 1px solid var(--hairline); border-radius: 5px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.15); max-height: 220px; overflow-y: auto; padding: 4px 0;
+  }
+  .multi-select-panel.show { display: block; }
+  .multi-select-option {
+    display: flex; align-items: center; gap: 8px; padding: 6px 12px; font-size: 12.5px; cursor: pointer;
+  }
+  .multi-select-option:hover { background: var(--parchment); }
+  .multi-select-option input { margin: 0; }
+  .multi-select-empty { padding: 8px 12px; font-size: 12px; color: var(--slate); font-style: italic; }
+
   .toast {
     position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
     background: var(--ink); color: var(--parchment); padding: 10px 18px; border-radius: 5px;
@@ -588,7 +614,13 @@
         <input type="text" id="directorySearchInput" placeholder="Search name, phone, email...">
         <input type="text" id="directoryAddressInput" placeholder="Filter by address (city, zip, street...)">
         <input type="number" id="directoryMinGivingInput" placeholder="Min lifetime given ($)" min="0">
-        <input type="text" id="directoryCommitteeInput" placeholder="Given to committee...">
+        <div class="multi-select" id="committeeMultiSelect">
+          <button type="button" class="multi-select-btn" id="committeeMultiSelectBtn">
+            <span class="ms-label">Given to committee...</span>
+            <span class="multi-select-count hidden" id="committeeMultiSelectCount"></span>
+          </button>
+          <div class="multi-select-panel" id="committeeMultiSelectPanel"></div>
+        </div>
       </div>
       <div class="directory-toolbar">
         <span id="directorySelectedCount">0 selected</span>
@@ -755,6 +787,7 @@ let statusFilter = '';
 let realtimeChannel = null;
 let peopleCache = null;
 let selectedDirectoryIds = new Set();
+let selectedCommittees = new Set();
 let duplicateFlags = null;
 
 function uid(prefix) { return prefix + '_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36); }
@@ -1241,11 +1274,12 @@ document.getElementById('newListBtn').addEventListener('click', async () => {
   document.getElementById('directorySearchInput').value = '';
   document.getElementById('directoryAddressInput').value = '';
   document.getElementById('directoryMinGivingInput').value = '';
-  document.getElementById('directoryCommitteeInput').value = '';
   selectedDirectoryIds = new Set();
+  selectedCommittees = new Set();
   await loadPeople();
   await loadGivingTotals();
   await loadCommitteeMap();
+  renderCommitteeMultiSelect();
   renderDirectoryList();
   document.getElementById('newListBackdrop').classList.add('show');
 });
@@ -1262,20 +1296,65 @@ function filteredDirectoryPeople() {
   const addrQ = document.getElementById('directoryAddressInput').value.toLowerCase().trim();
   const minGivingRaw = document.getElementById('directoryMinGivingInput').value;
   const minGiving = minGivingRaw !== '' ? Number(minGivingRaw) : null;
-  const committeeQ = document.getElementById('directoryCommitteeInput').value.toLowerCase().trim();
   const totals = givingTotals || new Map();
   const committees = committeeMap || new Map();
   return (peopleCache || []).filter(p => {
     if (q && !(p.name.toLowerCase().includes(q) || (p.phone||'').includes(q) || (p.email||'').toLowerCase().includes(q))) return false;
     if (addrQ && !(p.address || '').toLowerCase().includes(addrQ)) return false;
     if (minGiving != null && (totals.get(p.id) || 0) < minGiving) return false;
-    if (committeeQ) {
+    if (selectedCommittees.size) {
       const given = committees.get(p.id);
-      if (!given || ![...given].some(c => c.toLowerCase().includes(committeeQ))) return false;
+      if (!given || ![...given].some(c => selectedCommittees.has(c))) return false;
     }
     return true;
   }).sort((a,b) => a.name.localeCompare(b.name));
 }
+
+function allCommitteeOptions() {
+  const set = new Set();
+  (committeeMap || new Map()).forEach(given => given.forEach(c => set.add(c)));
+  return [...set].sort((a, b) => a.localeCompare(b));
+}
+
+function renderCommitteeMultiSelect() {
+  const panel = document.getElementById('committeeMultiSelectPanel');
+  const options = allCommitteeOptions();
+  panel.innerHTML = options.length
+    ? options.map(c => `
+        <label class="multi-select-option">
+          <input type="checkbox" value="${escapeHtml(c)}" ${selectedCommittees.has(c) ? 'checked' : ''}>
+          <span>${escapeHtml(c)}</span>
+        </label>
+      `).join('')
+    : `<div class="multi-select-empty">No committees recorded yet.</div>`;
+  panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedCommittees.add(cb.value); else selectedCommittees.delete(cb.value);
+      updateCommitteeMultiSelectLabel();
+      renderDirectoryList();
+    });
+  });
+  updateCommitteeMultiSelectLabel();
+}
+
+function updateCommitteeMultiSelectLabel() {
+  const countEl = document.getElementById('committeeMultiSelectCount');
+  if (selectedCommittees.size) {
+    countEl.textContent = selectedCommittees.size;
+    countEl.classList.remove('hidden');
+  } else {
+    countEl.classList.add('hidden');
+  }
+}
+
+document.getElementById('committeeMultiSelectBtn').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('committeeMultiSelectPanel').classList.toggle('show');
+});
+document.addEventListener('click', (e) => {
+  const wrap = document.getElementById('committeeMultiSelect');
+  if (wrap && !wrap.contains(e.target)) document.getElementById('committeeMultiSelectPanel').classList.remove('show');
+});
 
 function renderDirectoryList() {
   const el = document.getElementById('directoryListEl');
@@ -1312,7 +1391,7 @@ function renderDirectoryList() {
   });
 }
 
-['directorySearchInput', 'directoryAddressInput', 'directoryMinGivingInput', 'directoryCommitteeInput'].forEach(id => {
+['directorySearchInput', 'directoryAddressInput', 'directoryMinGivingInput'].forEach(id => {
   document.getElementById(id).addEventListener('input', () => renderDirectoryList());
 });
 
