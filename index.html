@@ -1798,6 +1798,47 @@ function buildImportIndex(header) {
   };
 }
 
+function parseImportDate(raw) {
+  if (!raw || !raw.trim()) return null;
+  const d = new Date(raw.trim());
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
+}
+
+function buildDonationImportIndex(header) {
+  const amountIdx = header.findIndex(h => h.includes('amount'));
+  // No dedicated Amount column? Fall back to a "Last Gift"-style column —
+  // common in donor CSVs that just have one numeric giving-history field.
+  const lastGiftIdx = header.findIndex(h => h.includes('last'));
+  return {
+    amount: amountIdx > -1 ? amountIdx : lastGiftIdx,
+    date: header.findIndex(h => h.includes('date')),
+    committee: header.findIndex(h => h.includes('committee') || h.includes('campaign')),
+  };
+}
+
+// Only accept values that are cleanly a dollar amount (optionally with $ and
+// commas) — rejects combined text like "$100, March 2026" rather than
+// mis-parsing it into a garbage number.
+function extractAmount(raw) {
+  const s = (raw || '').trim().replace(/[$,]/g, '');
+  if (!s || !/^-?\d+(\.\d+)?$/.test(s)) return null;
+  return Number(s);
+}
+
+// Returns true if a donation row was logged (i.e. the row had a usable amount).
+async function maybeLogImportedDonation(personId, row, donationIdx) {
+  if (!personId) return false;
+  const amountRaw = donationIdx.amount > -1 ? (row[donationIdx.amount]||'').trim() : '';
+  const amount = extractAmount(amountRaw);
+  if (amount == null) return false;
+  const committee = donationIdx.committee > -1 ? (row[donationIdx.committee]||'').trim() : '';
+  const donated_on = donationIdx.date > -1 ? parseImportDate(row[donationIdx.date]) : null;
+  const { error } = await window.supabase.from('donations')
+    .insert({ person_id: personId, amount, donated_on, committee: committee || null, status: 'fulfilled' });
+  if (error) { console.error(error); return false; }
+  return true;
+}
+
 document.getElementById('importBtn').addEventListener('click', () => {
   document.getElementById('csvFileInput').click();
 });
@@ -1810,8 +1851,10 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
   const header = rows[0].map(h => h.toLowerCase().trim());
   const idx = buildImportIndex(header);
   if (idx.name === -1) { showToast('File needs a Name column'); return; }
+  const donationIdx = buildDonationImportIndex(header);
   const list = activeList();
   let added = 0;
+  let donationsAdded = 0;
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     const name = (r[idx.name] || '').trim();
@@ -1840,22 +1883,18 @@ document.getElementById('csvFileInput').addEventListener('change', async (e) => 
     });
     await recordListMembership(personId, list.id);
     added++;
+    if (await maybeLogImportedDonation(personId, r, donationIdx)) donationsAdded++;
   }
   await saveData();
   renderAll();
-  showToast(`Imported ${added} contact${added === 1 ? '' : 's'}`);
+  showToast(`Imported ${added} contact${added === 1 ? '' : 's'}` +
+    (donationsAdded ? ` and logged ${donationsAdded} donation${donationsAdded === 1 ? '' : 's'}` : ''));
   e.target.value = '';
 });
 
 document.getElementById('masterImportBtn').addEventListener('click', () => {
   document.getElementById('masterCsvFileInput').click();
 });
-
-function parseImportDate(raw) {
-  if (!raw || !raw.trim()) return null;
-  const d = new Date(raw.trim());
-  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
-}
 
 document.getElementById('masterCsvFileInput').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -1865,11 +1904,7 @@ document.getElementById('masterCsvFileInput').addEventListener('change', async (
   const header = rows[0].map(h => h.toLowerCase().trim());
   const idx = buildImportIndex(header);
   if (idx.name === -1) { showToast('File needs a Name column'); return; }
-  const donationIdx = {
-    amount: header.findIndex(h => h.includes('amount')),
-    date: header.findIndex(h => h.includes('date')),
-    committee: header.findIndex(h => h.includes('committee') || h.includes('campaign')),
-  };
+  const donationIdx = buildDonationImportIndex(header);
   let added = 0;
   let donationsAdded = 0;
   for (let i = 1; i < rows.length; i++) {
@@ -1887,18 +1922,7 @@ document.getElementById('masterCsvFileInput').addEventListener('change', async (
     const category = idx.category > -1 ? normalizeCategory(r[idx.category]) : '';
     const personId = await findOrCreatePerson({ name, phone, email, address, organization, occupation, ask, lastGift, notes, category });
     added++;
-
-    const amountRaw = donationIdx.amount > -1 ? (r[donationIdx.amount]||'').trim() : '';
-    if (personId && amountRaw) {
-      const amount = Number(amountRaw.replace(/[^0-9.\-]/g, ''));
-      if (!isNaN(amount)) {
-        const committee = donationIdx.committee > -1 ? (r[donationIdx.committee]||'').trim() : '';
-        const donated_on = donationIdx.date > -1 ? parseImportDate(r[donationIdx.date]) : null;
-        const { error: donErr } = await window.supabase.from('donations')
-          .insert({ person_id: personId, amount, donated_on, committee: committee || null, status: 'fulfilled' });
-        if (donErr) console.error(donErr); else donationsAdded++;
-      }
-    }
+    if (await maybeLogImportedDonation(personId, r, donationIdx)) donationsAdded++;
   }
   await loadPeople(true);
   await loadDuplicateFlags(true);
