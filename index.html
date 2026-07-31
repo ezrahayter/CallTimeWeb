@@ -391,6 +391,7 @@
         <button class="ghost" id="renameListBtn" title="Rename this list">Rename</button>
         <button class="ghost" id="deleteListBtn" title="Delete this list">Delete list</button>
         <button class="ghost" id="newListBtn" title="Add a new candidate list">+ New list</button>
+        <button class="ghost" id="addToListBtn" title="Add existing contacts to a candidate list">+ Add to list</button>
       </div>
     </div>
     <div class="top-bar-auth">
@@ -603,13 +604,17 @@
 
 <div class="modal-backdrop" id="newListBackdrop">
   <div class="modal modal-xl">
-    <h3>New list</h3>
-    <div class="field">
+    <h3 id="newListModalTitle">New list</h3>
+    <div class="field" id="newListNameField">
       <label>List name</label>
       <input type="text" id="newListNameInput" placeholder="e.g. Fall Gala Prospects">
     </div>
+    <div class="field hidden" id="targetListField">
+      <label>Add to list</label>
+      <select id="targetListSelect"></select>
+    </div>
     <div class="field">
-      <label>Pull people from your directory (optional — you can also import a CSV/Excel after creating the list)</label>
+      <label id="directoryFieldLabel">Pull people from your directory (optional — you can also import a CSV/Excel after creating the list)</label>
       <div class="directory-filters">
         <input type="text" id="directorySearchInput" placeholder="Search name, phone, email...">
         <input type="number" id="directoryMinGivingInput" placeholder="Min lifetime given ($)" min="0">
@@ -638,6 +643,7 @@
     <div class="modal-actions">
       <button class="ghost" id="cancelNewListBtn">Cancel</button>
       <button class="primary" id="createNewListBtn">Create list</button>
+      <button class="primary hidden" id="addToListSubmitBtn">Add to list</button>
     </div>
   </div>
 </div>
@@ -1277,8 +1283,7 @@ document.getElementById('deleteListBtn').addEventListener('click', async () => {
   showToast('List deleted');
 });
 
-document.getElementById('newListBtn').addEventListener('click', async () => {
-  document.getElementById('newListNameInput').value = '';
+async function openDirectoryPickerModal() {
   document.getElementById('directorySearchInput').value = '';
   document.getElementById('directoryMinGivingInput').value = '';
   selectedDirectoryIds = new Set();
@@ -1291,6 +1296,32 @@ document.getElementById('newListBtn').addEventListener('click', async () => {
   renderCommitteeMultiSelect();
   renderDirectoryList();
   document.getElementById('newListBackdrop').classList.add('show');
+}
+
+document.getElementById('newListBtn').addEventListener('click', async () => {
+  document.getElementById('newListModalTitle').textContent = 'New list';
+  document.getElementById('newListNameField').classList.remove('hidden');
+  document.getElementById('targetListField').classList.add('hidden');
+  document.getElementById('directoryFieldLabel').textContent =
+    'Pull people from your directory (optional — you can also import a CSV/Excel after creating the list)';
+  document.getElementById('createNewListBtn').classList.remove('hidden');
+  document.getElementById('addToListSubmitBtn').classList.add('hidden');
+  document.getElementById('newListNameInput').value = '';
+  await openDirectoryPickerModal();
+});
+
+document.getElementById('addToListBtn').addEventListener('click', async () => {
+  if (!state.lists.length) { showToast('Create a list first'); return; }
+  document.getElementById('newListModalTitle').textContent = 'Add to list';
+  document.getElementById('newListNameField').classList.add('hidden');
+  document.getElementById('targetListField').classList.remove('hidden');
+  document.getElementById('directoryFieldLabel').textContent = 'Pull people from your directory';
+  document.getElementById('createNewListBtn').classList.add('hidden');
+  document.getElementById('addToListSubmitBtn').classList.remove('hidden');
+  const sel = document.getElementById('targetListSelect');
+  sel.innerHTML = state.lists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+  sel.value = activeListId;
+  await openDirectoryPickerModal();
 });
 
 document.getElementById('cancelNewListBtn').addEventListener('click', () => {
@@ -1531,6 +1562,33 @@ document.getElementById('createNewListBtn').addEventListener('click', async () =
   renderAll();
   document.getElementById('newListBackdrop').classList.remove('show');
   showToast('List created: ' + list.name);
+});
+
+document.getElementById('addToListSubmitBtn').addEventListener('click', async () => {
+  const listId = document.getElementById('targetListSelect').value;
+  const list = state.lists.find(l => l.id === listId);
+  if (!list) { showToast('Pick a list to add to'); return; }
+  const existingPersonIds = new Set(list.contacts.map(c => c.personId));
+  const picked = (peopleCache || []).filter(p => selectedDirectoryIds.has(p.id));
+  const newContacts = picked
+    .filter(p => !existingPersonIds.has(p.id))
+    .map(p => ({
+      id: uid('c'), name: p.name, phone: p.phone || '', email: p.email || '',
+      address: p.address || '', organization: p.organization || '', occupation: p.occupation || '',
+      ask: p.ask || '', lastGift: p.last_gift || '', notes: p.notes || '', category: 'current',
+      personId: p.id, priority: Date.now(), callLog: []
+    }));
+  const skipped = picked.length - newContacts.length;
+  if (!newContacts.length) { showToast(skipped ? 'Everyone selected is already on that list' : 'Select at least one person'); return; }
+  list.contacts.push(...newContacts);
+  activeListId = list.id;
+  await Promise.all(newContacts.map(c => recordListMembership(c.personId, list.id)));
+  await saveData();
+  renderListSelect();
+  renderAll();
+  document.getElementById('newListBackdrop').classList.remove('show');
+  showToast(`Added ${newContacts.length} contact${newContacts.length === 1 ? '' : 's'} to ${list.name}` +
+    (skipped ? ` (${skipped} already on the list)` : ''));
 });
 
 function renderAll() {
