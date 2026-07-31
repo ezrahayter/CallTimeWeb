@@ -1314,7 +1314,13 @@ function filteredDirectoryPeople() {
     }
     if (selectedCommittees.size) {
       const given = committees.get(p.id);
-      if (!given || ![...given].some(c => selectedCommittees.has(c.toLowerCase()))) return false;
+      // Substring match, not exact: freeform committee text varies a lot
+      // ("Andrew Learned" vs "Andrew Learned for State Senate"), so a
+      // checked value should also catch longer variants that contain it.
+      if (!given || ![...given].some(c => {
+        const lc = c.toLowerCase();
+        return [...selectedCommittees].some(sel => lc.includes(sel));
+      })) return false;
     }
     return true;
   }).sort((a,b) => a.name.localeCompare(b.name));
