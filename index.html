@@ -215,6 +215,8 @@
   .name-cell { font-weight: 600; }
   .sub-cell { color: var(--slate); font-size: 12px; margin-top: 2px; }
   .note-preview { color: var(--slate); font-size: 12px; max-width: 220px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; white-space: nowrap; }
+  .small-action { font-size: 11px; padding: 4px 8px; }
 
   .modal-backdrop {
     display: none; position: fixed; inset: 0; background: rgba(28,43,68,0.45);
@@ -471,6 +473,7 @@
               <th>Ask</th>
               <th>Category</th>
               <th>Last note</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody id="rosterBody"></tbody>
@@ -654,6 +657,21 @@
     <div class="outcome-grid" id="outcomeGrid"></div>
     <div class="modal-actions">
       <button class="ghost" id="cancelOutcomeBtn">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="categoryModalBackdrop">
+  <div class="modal">
+    <h3>Change category</h3>
+    <div class="cat-row" id="categoryModalRow">
+      <button class="cat-btn" data-cat="not-complete">Not Complete</button>
+      <button class="cat-btn" data-cat="current">Current</button>
+      <button class="cat-btn" data-cat="needs-follow-up">Needs Follow Up</button>
+      <button class="cat-btn" data-cat="complete">Complete</button>
+    </div>
+    <div class="modal-actions">
+      <button class="ghost" id="cancelCategoryBtn">Cancel</button>
     </div>
   </div>
 </div>
@@ -1606,7 +1624,7 @@ function todaysLogEntries(list) {
   const t = todayStr();
   let entries = [];
   list.contacts.forEach(c => {
-    (c.callLog || []).forEach(l => { if (l.date === t) entries.push(l); });
+    (c.callLog || []).forEach(l => { if (l.date === t && l.kind !== 'note') entries.push(l); });
   });
   return entries;
 }
@@ -1635,12 +1653,13 @@ function renderInlineLog(c) {
     return '<span style="font-style:italic;">No calls logged yet for this contact.</span>';
   }
   return '<b style="color:var(--ink);">Notes from this call log</b><br>' + c.callLog.slice().reverse().slice(0, 6).map(l =>
-    `<div class="log-entry">${escapeHtml(l.note)}</div>`
+    `<div class="log-entry">${l.kind === 'note' ? '<i>Note:</i> ' : ''}${escapeHtml(l.note)}</div>`
   ).join('');
 }
 
 let skippedIds = new Set();
 let skipHistory = [];
+let manualNextId = null;
 
 async function renderCallCardDonations(c) {
   const section = document.getElementById('callCardDonations');
@@ -1670,10 +1689,15 @@ async function renderCallCardDonations(c) {
 }
 
 function renderUpNext(list) {
+  let c = null;
+  if (manualNextId) {
+    c = list.contacts.find(x => x.id === manualNextId) || null;
+    if (!c) manualNextId = null;
+  }
   const queue = list.contacts.filter(c => c.category !== 'complete' && !skippedIds.has(c.id))
     .sort((a,b) => (catWeight(b.category) - catWeight(a.category)) || ((a.priority||0) - (b.priority||0)));
   const wrap = document.getElementById('callCardWrap');
-  if (!queue.length) {
+  if (!c && !queue.length) {
     const hasSkipped = skippedIds.size > 0 && list.contacts.some(c => c.category !== 'complete');
     wrap.innerHTML = hasSkipped
       ? `<div class="empty-queue"><div class="big">You've gone through everyone</div>Skipped contacts are still waiting.<br><br>
@@ -1695,10 +1719,11 @@ function renderUpNext(list) {
     }
     return;
   }
-  const c = queue[0];
+  const isPinned = !!c;
+  if (!c) c = queue[0];
   wrap.innerHTML = `
     <div class="call-card" data-contact-id="${c.id}">
-      <div class="eyebrow">${catLabel(c.category)}</div>
+      <div class="eyebrow">${isPinned ? 'Pinned — Up Next' : catLabel(c.category)}</div>
       <h3>${escapeHtml(c.name)}</h3>
       <div class="call-meta">
         ${c.phone ? `<span>${escapeHtml(c.phone)}</span>` : ''}
@@ -1718,8 +1743,10 @@ function renderUpNext(list) {
       </div>
       <div class="log-actions">
         <button class="primary" id="logCallBtn">Log call</button>
+        <button class="ghost" id="saveNoteBtn">Save note</button>
         <button class="ghost" id="backBtn" ${skipHistory.length ? '' : 'disabled'}>← Back</button>
         <button class="ghost" id="skipBtn">Skip to next →</button>
+        ${isPinned ? '<button class="ghost" id="clearPinBtn">Back to queue</button>' : ''}
         <button class="ghost" data-action="edit">Edit contact</button>
       </div>
       <div class="call-log-list" id="inlineCallLog">${renderInlineLog(c)}</div>
@@ -1742,7 +1769,15 @@ function renderUpNext(list) {
     });
   });
   wrap.querySelector('#logCallBtn').addEventListener('click', () => openOutcomePopup(c.id, chosenCat));
+  wrap.querySelector('#saveNoteBtn').addEventListener('click', () => saveNoteOnly(c.id));
+  if (isPinned) {
+    wrap.querySelector('#clearPinBtn').addEventListener('click', () => {
+      manualNextId = null;
+      renderUpNext(activeList());
+    });
+  }
   wrap.querySelector('#skipBtn').addEventListener('click', () => {
+    if (manualNextId === c.id) manualNextId = null;
     skippedIds.add(c.id);
     skipHistory.push(c.id);
     renderUpNext(activeList());
@@ -1796,9 +1831,24 @@ async function logCall(id, category, outcome) {
   c.category = category;
   c.priority = Date.now();
   skippedIds.delete(id);
+  if (manualNextId === id) manualNextId = null;
   await saveData();
   renderAll();
   showToast('Call logged: ' + outcome);
+}
+
+async function saveNoteOnly(id) {
+  const list = activeList();
+  const c = list.contacts.find(x => x.id === id);
+  if (!c) return;
+  const noteEl = document.getElementById('quickNote');
+  const typedNote = noteEl ? noteEl.value.trim() : '';
+  if (!typedNote) { showToast('Type a note first'); return; }
+  c.callLog = c.callLog || [];
+  c.callLog.push({ date: todayStr(), note: typedNote, category: c.category, kind: 'note' });
+  await saveData();
+  renderAll();
+  showToast('Note saved');
 }
 
 function escapeHtml(s) {
@@ -1821,7 +1871,7 @@ function renderTable(list) {
   const rows = filteredContacts(list);
   const tbody = document.getElementById('rosterBody');
   if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; color:var(--slate); padding:24px;">No contacts match.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center; color:var(--slate); padding:24px;">No contacts match.</td></tr>`;
     return;
   }
   tbody.innerHTML = rows.map(c => {
@@ -1835,13 +1885,68 @@ function renderTable(list) {
       <td>${escapeHtml(c.ask || '—')}</td>
       <td><span class="status-pill status-${c.category}">${catLabel(c.category)}</span></td>
       <td class="note-preview">${lastLog && lastLog.note ? escapeHtml(lastLog.note) : '—'}</td>
+      <td class="row-actions">
+        <button class="ghost small-action call-next-btn" data-id="${c.id}" title="Make this contact Up Next">Call next</button>
+        <button class="ghost small-action change-cat-btn" data-id="${c.id}" title="Change category">Category ▾</button>
+      </td>
     </tr>
   `;
   }).join('');
   tbody.querySelectorAll('.contact-row').forEach(tr => {
     tr.addEventListener('click', () => openModal(tr.dataset.id));
   });
+  tbody.querySelectorAll('.call-next-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      manualNextId = btn.dataset.id;
+      skippedIds.delete(manualNextId);
+      renderUpNext(activeList());
+      document.getElementById('callCardWrap').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      showToast('Moved to Up Next');
+    });
+  });
+  tbody.querySelectorAll('.change-cat-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openCategoryModal(btn.dataset.id);
+    });
+  });
 }
+
+function openCategoryModal(id) {
+  const list = activeList();
+  const c = list.contacts.find(x => x.id === id);
+  if (!c) return;
+  const modal = document.getElementById('categoryModalBackdrop');
+  const row = document.getElementById('categoryModalRow');
+  row.dataset.id = id;
+  row.querySelectorAll('.cat-btn').forEach(btn => {
+    btn.classList.toggle('selected', btn.dataset.cat === c.category);
+  });
+  modal.classList.add('show');
+}
+
+function closeCategoryModal() {
+  document.getElementById('categoryModalBackdrop').classList.remove('show');
+}
+
+document.getElementById('categoryModalRow').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.cat-btn');
+  if (!btn) return;
+  const id = document.getElementById('categoryModalRow').dataset.id;
+  const list = activeList();
+  const c = list.contacts.find(x => x.id === id);
+  if (!c) { closeCategoryModal(); return; }
+  c.category = btn.dataset.cat;
+  await saveData();
+  closeCategoryModal();
+  renderAll();
+  showToast('Category updated');
+});
+document.getElementById('cancelCategoryBtn').addEventListener('click', closeCategoryModal);
+document.getElementById('categoryModalBackdrop').addEventListener('click', (e) => {
+  if (e.target.id === 'categoryModalBackdrop') closeCategoryModal();
+});
 
 async function openModal(id) {
   const list = activeList();
@@ -1864,7 +1969,7 @@ async function openModal(id) {
   const logDiv = document.getElementById('editCallLog');
   if (c && c.callLog && c.callLog.length) {
     logDiv.innerHTML = '<b style="color:var(--ink);">Call history</b><br>' + c.callLog.slice().reverse().map(l =>
-      `<div class="log-entry"><b>${l.date}</b> — ${catLabel(l.category)}${l.note ? ': '+escapeHtml(l.note) : ''}</div>`
+      `<div class="log-entry"><b>${l.date}</b> — ${l.kind === 'note' ? 'Note' : catLabel(l.category)}${l.note ? ': '+escapeHtml(l.note) : ''}</div>`
     ).join('');
   } else {
     logDiv.innerHTML = '';
